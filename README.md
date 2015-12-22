@@ -1,2 +1,1 @@
-# genomics
-a collection of scripts and notes
+there is also the [wiki](https://github.com/igordot/genomics/wiki)
