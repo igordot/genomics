@@ -1,5 +1,12 @@
 # Working with FASTA Files
 
+Index FASTA:
+```
+samtools faidx genome.fa
+```
+
+***
+
 Filter FASTA file by sequence length:
 ```
 # FASTA file must not be wrapped (each sequence should appear on a single line)
