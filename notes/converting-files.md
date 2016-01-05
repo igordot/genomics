@@ -17,7 +17,7 @@ paste <(cut -f 12 refFlat.tmp.txt) <(cut -f 1-10 refFlat.tmp.txt) > refFlat.txt
 rm refFlat.tmp.txt
 gzip refFlat.txt
 ```
-Tested with Ensembl GTF file and used for Picard CollectRnaSeqMetrics.  
+Tested with Ensembl GTF file and used for Picard CollectRnaSeqMetrics (must be gzipped).  
 gtfToGenePred obtained from http://hgdownload.cse.ucsc.edu/admin/exe/
 
 ***
