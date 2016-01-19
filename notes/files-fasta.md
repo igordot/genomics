@@ -7,6 +7,28 @@ samtools faidx genome.fa
 
 ***
 
+Remove empty records (description without sequence):
+```
+awk '$2{print RS}$2' FS='\n' RS=\> ORS= in.fasta > out.fasta
+```
+
+***
+
+Remove blank lines:
+```
+sed -i '/^$/d' in.fasta
+```
+
+***
+
+Remove problematic characters (may cause issues with some tools):
+```
+sed -i -e "s/[ ,\(\)\.\/\|:=]/_/g" in.fasta
+sed -i 's/___/__/g' in.fasta
+```
+
+***
+
 Filter FASTA file by sequence length:
 ```
 # FASTA file must not be wrapped (each sequence should appear on a single line)
