@@ -21,7 +21,7 @@ sed -i '/^$/d' in.fasta
 
 ***
 
-Remove problematic characters (may cause issues with some tools):
+Remove problematic characters (they may cause issues with some tools):
 ```
 sed -i -e "s/[ ,\(\)\.\/\|:=]/_/g" in.fasta
 sed -i 's/___/__/g' in.fasta
