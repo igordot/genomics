@@ -10,3 +10,4 @@
 |[Sincera](https://research.cchmc.org/pbge/sincera.html)||
 |[sincell](http://bioconductor.org/packages/devel/bioc/html/sincell.html)||
 |[cellTree](http://bioconductor.org/packages/devel/bioc/html/cellTree.html)||
+|[RaceID](https://github.com/dgrun/RaceID)||
