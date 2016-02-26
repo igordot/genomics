@@ -41,3 +41,16 @@ Convert DOT database schema file to SVG or PNG:
 dot -Tsvg file.dot > file.svg
 dot -Tpng file.dot > file.png
 ```
+
+***
+
+## Between Various Image Formats
+ImageMagick:
+```
+convert in.png out.pdf
+```
+Ghostscript (seems to perform better):
+```
+gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -dPDFSETTINGS=/prepress -sOutputFile=out.pdf in.pdf
+```
+Both can do wildcard inputs to merge multiple files.
