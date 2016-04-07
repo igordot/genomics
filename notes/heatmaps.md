@@ -4,7 +4,7 @@ graphical heatmap generation tools
 
 |tool       |comment    |
 |:----------|:----------|
-|[Heatmap from LANL HIV sequence database](http://www.hiv.lanl.gov/content/sequence/HEATMAP/heatmap.html)|web-based|
+|[Heatmap from HIV sequence database](http://www.hiv.lanl.gov/content/sequence/HEATMAP/heatmap.html)|web-based|
 |[jHeatmap](http://jheatmap.github.io/jheatmap/)|web-based|
 |[HeatmapGenerator](https://github.com/Bohdan-Khomtchouk/HeatmapGenerator)|a graphical user interface software program written in C++, R, and OpenGL|
 |[GENE-E](http://www.broadinstitute.org/cancer/software/GENE-E/)||
