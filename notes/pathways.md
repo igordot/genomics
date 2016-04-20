@@ -10,4 +10,9 @@
 |[Reactome](http://www.reactome.org/)|web-based||
 |[GeNets](http://www.broadinstitute.org/genets)|web-based||
 |[LRpath](http://lrpath.ncibi.org/)|web-based||
-
+|[FuncAssociate](http://llama.mshri.on.ca/funcassociate/)|web-based|
+|[Babelomics](http://babelomics.bioinfo.cipf.es/)|web-based|
+|[PANTHER](http://pantherdb.org/)|web-based|
+|[GOEAST](http://omicslab.genetics.ac.cn/GOEAST/)|web-based|
+|[ToppGene](https://toppgene.cchmc.org/)|web-based|
+|[g:Profiler](http://biit.cs.ut.ee/gprofiler/)|web-based|
