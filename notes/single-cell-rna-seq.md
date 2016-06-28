@@ -11,3 +11,4 @@
 |[sincell](http://bioconductor.org/packages/devel/bioc/html/sincell.html)||
 |[cellTree](http://bioconductor.org/packages/devel/bioc/html/cellTree.html)||
 |[RaceID](https://github.com/dgrun/RaceID)||
+|[SIMLR](https://github.com/BatzoglouLabSU/SIMLR)||
