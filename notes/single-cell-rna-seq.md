@@ -12,3 +12,4 @@
 |[cellTree](http://bioconductor.org/packages/devel/bioc/html/cellTree.html)||
 |[RaceID](https://github.com/dgrun/RaceID)||
 |[SIMLR](https://github.com/BatzoglouLabSU/SIMLR)||
+|[scater](https://github.com/davismcc/scater)||
