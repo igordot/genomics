@@ -2,12 +2,12 @@
 
 | | forward (transcript) | reverse (rev comp of transcript) |
 |:----------|:----------|:----------|
-| TopHat/Cufflinks | fr-secondstrand | fr-firststrand |
+| TopHat/Cufflinks `--library-type` | fr-secondstrand | fr-firststrand |
 | STAR | 1st read strand | 2nd read strand |
-| Picard CollectRnaSeqMetrics | FIRST_READ_TRANSCRIPTION_STRAND | SECOND_READ_TRANSCRIPTION_STRAND |
-| htseq-count | yes | reverse |
-| subread featureCounts | 1 | 2 |
-| RSEM | forward-prob 1 | forward-prob 0 |
+| Picard CollectRnaSeqMetrics `STRAND_SPECIFICITY` | FIRST_READ_TRANSCRIPTION_STRAND | SECOND_READ_TRANSCRIPTION_STRAND |
+| htseq-count `-s/--stranded` |yes | reverse |
+| subread featureCounts `-s` | 1 | 2 |
+| RSEM `--forward-prob` | 1 | 0 |
 | Library Kit | Illumina ScriptSeq | Illumina TruSeq Stranded Total RNA |
 
 ***
