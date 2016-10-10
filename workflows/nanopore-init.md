@@ -33,7 +33,7 @@ Determine nucleotide composition:
 poretools nucdist $fast5_dir > reads.2D.nucdist.txt
 ```
 
-Generate FASTQ file
+Generate gzipped FASTQ file:
 ```
 poretools fastq --min-length 500 --type 2D $fast5_dir | gzip > reads.2D.fastq.gz
 ```
