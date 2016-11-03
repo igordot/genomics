@@ -4,12 +4,12 @@ During a standard MinION run with a single unbarcoded sample, the MinKNOW so
 molecule in a local directory `/minion_path/reads/`. These FAST5 files contain aggregated signal measurements and are 
 not basecalled.
 
-Basecalling of the FAST5 files is done by the Metrichor that uploads each pre-basecalled FAST5 file from the
+Basecalling of the FAST5 files can be done by the Metrichor that uploads each pre-basecalled FAST5 file from the
 `/minion_path/reads/` directory to the cloud-based basecalling service. Uploaded FAST5 files are moved to the 
 `/metrichor_path/reads/uploads` directory. Basecalled FAST5 files are downloaded to the `/metrichor_path/reads/downloads` 
 directory and then further separated into `pass` and `fail` directories. For a 2D workflow, a read will pass if
 basecalling was successful and a 2D read (template, complement, and hairpin) was produced with a mean base quality 
-score greater than 9.
+score greater than 9. If barcodes are considered for basecalling, separate directories are created for each sample.
 
 Basecalled FAST5 files can be converted to FASTQ format that is more compatible with verious downstream analysis tools.
 
