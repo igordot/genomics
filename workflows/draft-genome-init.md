@@ -26,7 +26,10 @@ wget -O genes.ensembl.pre.gtf.gz ftp://ftp.ensembl.org/pub/pre/gtf/saimiri_boliv
 
 Once you have the reference files, it's a good idea to spot-check them.
 ```
-$ zcat genome.ensembl.pre.fa.gz | grep ">" | head
+zcat genome.ensembl.pre.fa.gz | grep ">" | head
+```
+Output:
+```
 >scaffold:SaiBol1.0:JH378105.1:1:72162052:1 scaffold JH378105.1
 >scaffold:SaiBol1.0:JH378106.1:1:71252344:1 scaffold JH378106.1
 >scaffold:SaiBol1.0:JH378107.1:1:58292249:1 scaffold JH378107.1
@@ -40,7 +43,10 @@ $ zcat genome.ensembl.pre.fa.gz | grep ">" | head
 ```
 
 ```
-$ zcat genes.ensembl.pre.gtf.gz | head
+zcat genes.ensembl.pre.gtf.gz | head
+```
+Output:
+```
 JH378796.1	protein_coding	exon	805	910	.	+	.	 gene_id "ENSP00000271139_1"; transcript_id "ENSP00000271139_1"; exon_number "1"; gene_biotype "protein_coding";
 JH378796.1	protein_coding	CDS	805	910	.	+	0	 gene_id "ENSP00000271139_1"; transcript_id "ENSP00000271139_1"; exon_number "1"; gene_biotype "protein_coding"; protein_id "ENSP00000271139_1";
 JH378796.1	protein_coding	exon	2580	3055	.	+	.	 gene_id "ENSP00000271139_1"; transcript_id "ENSP00000271139_1"; exon_number "2"; gene_biotype "protein_coding";
@@ -103,9 +109,9 @@ NW_003943604.1	Gnomon	gene	16666	24141	.	+	.	ID=gene1;Dbxref=GeneID:101050261;Na
 
 These reference files aren't perfect either, but at least the gene names are present.
 
-Fix the FASTA contig names so they match the GFF (`NW_*`):
+Fix the FASTA contig names so they match the GFF contig names (`NW_*` or `NC_*`):
 ```
-zcat genome.ncbi.fa.gz | perl -pe 's/gi\|.*\|(NW_.+?)\|.*/\1/g' > genome.fa
+zcat genome.ncbi.fa.gz | perl -pe 's/gi\|.*\|(N._.+?)\|.*/\1/g' > genome.fa
 ```
 
 Convert GFF to GTF using `gffread` (part of Cufflinks suite):
@@ -113,12 +119,10 @@ Convert GFF to GTF using `gffread` (part of Cufflinks suite):
 zcat genes.ncbi.gff3.gz | gffread - -T -o genes.ncbi.gff3.gtf
 ```
 
-A few (24 out of over 850,000) of the GTF entries do not contain `gene_id` or `gene_name`. A few others (37) use `NC_*` 
-(instead of `NW_*`) contigs that are not present in the FASTA. Remove those:
+A few (24 out of over 850,000) of the GTF entries do not contain `gene_id` or `gene_name`. Remove those:
 ```
-cat genes.ncbi.gff3.gtf | grep "gene_name" | grep "^NW_" > genes.gtf
+cat genes.ncbi.gff3.gtf | grep "gene_name" > genes.gtf
 ```
 
 This leaves us with a clean `genome.fa` and `genes.gtf` for [setting up a reference genome directory]
 (https://github.com/igordot/genomics/blob/master/workflows/ref-genome-init.md).
- 
