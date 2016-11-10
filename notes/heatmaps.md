@@ -1,6 +1,6 @@
 # Heatmaps
 
-graphical heatmap generation tools
+## graphical heatmap generation tools
 
 |tool       |comment    |
 |:----------|:----------|
@@ -12,3 +12,10 @@ graphical heatmap generation tools
 |[HeatmapGenerator](https://github.com/Bohdan-Khomtchouk/HeatmapGenerator)|a graphical user interface software program written in C++, R, and OpenGL|
 |[GENE-E](http://www.broadinstitute.org/cancer/software/GENE-E/)||
 |[MeV: MultiExperiment Viewer](http://www.tm4.org/mev.html)||
+
+## R functions
+
+* [heatmap.2 (gplots package)](https://www.rdocumentation.org/packages/gplots/topics/heatmap.2)
+* [heatmap.3 (GMD package)](https://www.rdocumentation.org/packages/GMD/topics/heatmap.3)
+* [aheatmap (NMF package)](https://www.rdocumentation.org/packages/NMF/topics/aheatmap)
+* [pheatmap](https://www.rdocumentation.org/packages/pheatmap/topics/pheatmap)
