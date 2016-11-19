@@ -92,3 +92,4 @@ http://mev.tm4.org/
 * [heatmap.3 (GMD package)](https://www.rdocumentation.org/packages/GMD/topics/heatmap.3)
 * [aheatmap (NMF package)](https://www.rdocumentation.org/packages/NMF/topics/aheatmap)
 * [pheatmap](https://www.rdocumentation.org/packages/pheatmap/topics/pheatmap)
+* [ComplexHeatmap](https://www.rdocumentation.org/packages/ComplexHeatmap/topics/ComplexHeatmap)
