@@ -1,5 +1,6 @@
 # RNA-Seq Analysis
 
+
 Some basic RNA-seq analysis resources.
 
 ## Web Resources
@@ -20,3 +21,6 @@ Some basic RNA-seq analysis resources.
 
 [A survey of best practices for RNA-seq data analysis](http://genomebiology.biomedcentral.com/articles/10.1186/s13059-016-0881-8) (1/2016)
 > We review all of the major steps in RNA-seq data analysis, including experimental design, quality control, read alignment, quantification of gene and transcript levels, visualization, differential gene expression, alternative splicing, functional analysis, gene fusion detection and eQTL mapping. We highlight the challenges associated with each step. We discuss the analysis of small RNAs and the integration of RNA-seq with other functional genomics techniques. Finally, we discuss the outlook for novel technologies that are changing the state of the art in transcriptomics.
+
+[How many biological replicates are needed in an RNA-seq experiment and which differential expression tool should you use?](http://rnajournal.cshlp.org/content/22/6/839.long) (6/2016)
+> For future RNA-seq experiments, these results suggest that at least six biological replicates should be used, rising to at least 12 when it is important to identify SDE genes for all fold changes. If fewer than 12 replicates are used, a superior combination of true positive and false positive performances makes edgeR and DESeq2 the leading tools. For higher replicate numbers, minimizing false positives is more important and DESeq marginally outperforms the other tools.

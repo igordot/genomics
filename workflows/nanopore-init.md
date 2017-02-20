@@ -1,18 +1,20 @@
 # Basic QC and setup of an Oxford Nanopore run
 
+
 During a standard MinION run with a single unbarcoded sample, the MinKNOW software writes a FAST5 file for each DNA 
-molecule in a local directory `/minion_path/reads/`. These FAST5 files contain aggregated signal measurements and are 
+molecule in a local directory `/minion_path/reads/`. These FAST5 files contain aggregated signal measurements and are
 not basecalled.
 
-Basecalling of the FAST5 files can be done by the Metrichor cloud-based basecalling service that will process each 
-pre-basecalled FAST5 file from the `/minion_path/reads/` directory. 
-Nanopore also releases Albacore software for local offline basecalling. 
+Basecalling of the FAST5 files can be done by the Metrichor cloud-based basecalling service that will process each
+pre-basecalled FAST5 file from the `/minion_path/reads/` directory.
+Nanopore also releases Albacore software for local offline basecalling.
 As of version 0.7 (11/2016), Albacore can be used for 1D and 2D reads.
 
-FAST5 files uploaded to Metrichor are moved to the `/metrichor_path/reads/uploads` directory. 
-Basecalled FAST5 files are downloaded to the `/metrichor_path/reads/downloads` directory and then further separated 
-into `pass` and `fail` directories. 
-For a 2D workflow, a read will pass if basecalling was successful and a 2D read (template, complement, and hairpin) was produced with a mean base quality score greater than 9. 
+FAST5 files uploaded to Metrichor are moved to the `/metrichor_path/reads/uploads` directory.
+Basecalled FAST5 files are downloaded to the `/metrichor_path/reads/downloads` directory and then further separated
+into `pass` and `fail` directories.
+For a 2D workflow, a read will pass if basecalling was successful and a 2D read (template, complement, and hairpin) was
+produced with a mean base quality score greater than 9.
 If barcodes are considered for basecalling, separate directories are created for each sample.
 
 Basecalled FAST5 files can be converted to FASTQ format that is more compatible with verious downstream analysis tools.

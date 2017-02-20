@@ -1,5 +1,6 @@
 # Initializing reference genome directory
 
+
 Most bioinformatic tools require a reference, but the exact requirements can vary. These are my steps for setting up 
 a reference genome directory that can be used for common analysis types (RNA-seq, ChIP-seq, WGS/WES). This workflow is 
 inspired by Illumina iGenomes, a collection of sequence and annotation files for commonly analyzed genomes.

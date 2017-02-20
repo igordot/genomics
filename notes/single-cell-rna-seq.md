@@ -2,7 +2,7 @@
 
 |tool       |comment    |
 |:----------|:----------|
-|Monocle||
+|[Monocle](https://bioconductor.org/packages/release/bioc/html/monocle.html)||
 |scLVM||
 |SCDE||
 |[scDD](https://github.com/kdkorthauer/scDD)||
