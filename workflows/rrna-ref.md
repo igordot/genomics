@@ -34,7 +34,8 @@ zcat Rfam.all.fa.gz \
 Remove empty lines, replace spaces with underscores, and keep just "ribosomal" sequences:
 ```bash
 zcat Rfam.all.nowrap.fa.gz \
-| sed '/^$/d' | sed 's/\s/_/g' \
+| sed '/^$/d' \
+| sed 's/\s/_/g' \
 | awk 'BEGIN {RS=">"; ORS="";} tolower($1) ~ /ribosomal_rna/ {print ">"$0}' \
 | gzip \
 > Rfam.rRNA.nowrap.fa.gz
