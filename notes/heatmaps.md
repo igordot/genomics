@@ -1,6 +1,31 @@
 # Heatmap Generation Tools
 
 
+## R functions (static)
+
+* [heatmap (stats package)](https://www.rdocumentation.org/packages/stats/topics/heatmap)
+* [heatmap.2 (gplots package)](https://www.rdocumentation.org/packages/gplots/topics/heatmap.2)
+* [heatmap.3 (GMD package)](https://www.rdocumentation.org/packages/GMD/topics/heatmap.3)
+* [aheatmap (NMF package)](https://www.rdocumentation.org/packages/NMF/topics/aheatmap)
+* [pheatmap](https://www.rdocumentation.org/packages/pheatmap/topics/pheatmap)
+* [ComplexHeatmap](https://www.rdocumentation.org/packages/ComplexHeatmap/topics/ComplexHeatmap)
+* [heatmap3](https://www.rdocumentation.org/packages/heatmap3/topics/heatmap3)
+* [heatmap1 (NeatMap package)](https://www.rdocumentation.org/packages/NeatMap/topics/heatmap1)
+* [superheat](https://www.rdocumentation.org/packages/superheat/topics/superheat)
+* [heatmap.bp (vcfR package)](https://www.rdocumentation.org/packages/vcfR/topics/heatmap.bp)
+* [geom_tile (ggplot2 package)](https://www.rdocumentation.org/packages/ggplot2/topics/geom_tile)
+* [gapmap](https://www.rdocumentation.org/packages/gapmap/topics/gapmap)
+
+
+## R functions (interactive)
+
+* [d3heatmap](https://www.rdocumentation.org/packages/d3heatmap/topics/d3heatmap)
+* [heatmaply](https://www.rdocumentation.org/packages/heatmaply/topics/heatmaply)
+* [annHeatmap (Heatplus package)](https://www.rdocumentation.org/packages/Heatplus/topics/annHeatmap)
+* [iheatmapr](https://github.com/AliciaSchep/iheatmapr)
+* [iheatmap (qtlcharts package)](https://www.rdocumentation.org/packages/qtlcharts/topics/iheatmap)
+
+
 ## Microsoft Excel
 
 tutorial 1: http://policyviz.com/create-a-heatmap-in-excel/
@@ -84,12 +109,3 @@ http://mev.tm4.org/
 > WebMeV (Multiple Experiment Viewer) is a cloud-based application supporting analysis, visualization, and stratification of large genomic data, particularly for RNASeq and microarray data.
 
 ![image](https://cloud.githubusercontent.com/assets/6363505/20319258/73762a5e-ab3b-11e6-829f-ad84cb26407d.png)
-
-
-## R functions
-
-* [heatmap.2 (gplots package)](https://www.rdocumentation.org/packages/gplots/topics/heatmap.2)
-* [heatmap.3 (GMD package)](https://www.rdocumentation.org/packages/GMD/topics/heatmap.3)
-* [aheatmap (NMF package)](https://www.rdocumentation.org/packages/NMF/topics/aheatmap)
-* [pheatmap](https://www.rdocumentation.org/packages/pheatmap/topics/pheatmap)
-* [ComplexHeatmap](https://www.rdocumentation.org/packages/ComplexHeatmap/topics/ComplexHeatmap)

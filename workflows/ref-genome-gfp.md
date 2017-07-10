@@ -7,10 +7,12 @@ Since a FASTA file can contain multiple sequences, it's trivial to create a comb
 exact position in the genome where the foreign sequence is introduced.
 However, for RNA-seq, you would need to also modify gene annotations, which is more involved.
 
-This example uses GFP as the introduced sequence, since that is a common and simple use case.
+This example uses green fluorescent protein (GFP) as the introduced sequence, since that is a common use case.
+Searching for the exact GFP sequence yields many variants, since there are multiple source species of wild-type GFP and
+various engineered derivatives.
+Most of the mammalian expression vectors use the "enhanced" or "eukaryotic" GFP (EGFP).
 
-Although there is only one GFP, searching for the exact sequence yields many variants.
-This is the compact canonical version that was used to to create `genome.GFP.fa`:
+This is the sequence that was used to create a GFP FASTA file `genome.GFP.fa`:
 ```
 >GFP
 ATGGTGAGCAAGGGCGAGGAGCTGTTCACCGGGGTGGTGCCCATCCTGGTCGAGCTGGACGGCGACGTAAACGGCCACAA
@@ -42,7 +44,7 @@ Different tools expect different content from a GTF file.
 Using `gene`, `transcript`, and `exon` features seems to be sufficient.
 The `gene_biotype` attribute was only added to help with filtering.
 
-Finally, merge the FASTA and GTF files:
+Finally, merge the standard genome FASTA and GTF files with the GFP ones:
 ```bash
 cat genome.mm10.fa genome.GFP.fa > genome.fa
 cat genes.mm10.gtf genes.GFP.gtf > genes.gtf
