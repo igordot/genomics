@@ -1,61 +1,114 @@
-# Basic QC and setup of an Oxford Nanopore run
+# Basic QC and processing of Oxford Nanopore Technologies (ONT) data
 
+
+## Sequencing
+
+There are multiple sequencing protocols. The basic one is 1D, which is analogous to Illumina's single-read option where each DNA fragment is sequenced once. For higher accuracy, there was a 2D workflow where each fragment will generate both a template and complement reads (sepated by hairpin). In May 2017, ONT replaced the 2D system (part of a legal dispute since Pacific Biosciences patented the hairpin approach) with 1D^2 or "1D squared". 
 
 During a standard MinION run with a single unbarcoded sample, the MinKNOW software writes a FAST5 file for each DNA 
-molecule in a local directory `/minion_path/reads/`. These FAST5 files contain aggregated signal measurements and are
-not basecalled.
+molecule in a local directory. These FAST5 files contain aggregated signal measurements and may be basecalled.
 
-Basecalling of the FAST5 files can be done by the Metrichor cloud-based basecalling service that will process each
-pre-basecalled FAST5 file from the `/minion_path/reads/` directory.
-Nanopore also releases Albacore software for local offline basecalling.
-As of version 0.7 (11/2016), Albacore can be used for 1D and 2D reads.
+## Basecalling
 
-FAST5 files uploaded to Metrichor are moved to the `/metrichor_path/reads/uploads` directory.
-Basecalled FAST5 files are downloaded to the `/metrichor_path/reads/downloads` directory and then further separated
-into `pass` and `fail` directories.
-For a 2D workflow, a read will pass if basecalling was successful and a 2D read (template, complement, and hairpin) was
-produced with a mean base quality score greater than 9.
-If barcodes are considered for basecalling, separate directories are created for each sample.
+MinKNOW can output basecalled and non-basecalled FAST5 files, but MinKNOW basecalled files may cause issues downstream. ONT also offers [Albacore](https://community.nanoporetech.com/protocols/albacore-offline-basecalli/v/abec_2003_v1_revx_29nov2016) for local offline basecalling.
+
+Albacore needs Python 3.4+ and can by installed using `pip` (it's probably best to use `virtualenv`):
+```bash
+
+# create a new environment in your virtualenv directory
+cd /virtualenv_path/
+pyvenv albacore
+
+# activate virtualenv
+source /virtualenv_path/albacore/bin/activate
+
+# upgrade pip
+pip install --upgrade pip
+
+# install albacore from .whl (from ONT website)
+pip install /path/ont_albacore-x.x.x.whl
+
+# deactivate virtualenv
+deactivate
+```
+
+Perform basecalling:
+```bash
+# it may be necessary to unset PYTHONPATH if it was set
+unset PYTHONPATH
+
+# activate virtualenv
+source /virtualenv_path/albacore/bin/activate
+
+# check available flowcells and kits (must be specified for basecalling)
+read_fast5_basecaller.py --list_workflows
+
+# run basecaller (use & to run the process in the background)
+read_fast5_basecaller.py \
+--worker_threads 8 \
+--recursive \
+--save_path ./albacore-out \
+--output_format fast5 \
+--input ./fast5 \
+--flowcell FLO-MIN000 \
+--kit SQK-NSK000 \
+&
+
+# check the number of processed reads
+cat ./albacore-out/pipeline.log | grep "Finished" | wc -l
+
+# deactivate virtualenv
+deactivate
+```
+
+## Data extraction
 
 Basecalled FAST5 files can be converted to FASTQ format that is more compatible with verious downstream analysis tools.
 
-Create a variable for the pass reads directory:
-```
-fast5_dir="metrichor_path/downloads/pass"
-```
+[Poretools](http://poretools.readthedocs.io/) is a popular tool for extracting data and information from FAST5 files.
 
-Check the number of passing FAST5 files:
-```
-find $fast5_dir -name "*.fast5" | wc -l
+Create a variable for the basecalled reads directory:
+```bash
+fast5_dir="/albacore_path/workspace"
 ```
 
 Calculate overall stats (number of reads, mean read length, etc.):
-```
+```bash
 poretools stats --type 2D $fast5_dir > reads.2D.stats.txt
 ```
 
 Determine nucleotide composition:
-```
+```bash
 poretools nucdist $fast5_dir > reads.2D.nucdist.txt
 ```
 
 Generate gzipped FASTQ file:
-```
+```bash
 poretools fastq --min-length 500 --type 2D $fast5_dir | gzip > reads.2D.fastq.gz
 ```
 
 Generate FASTA file:
-```
+```bash
 poretools fasta --min-length 500 --type 2D $fast5_dir > reads.2D.fasta
 ```
 
 Generate a histogram of read lengths:
-```
+```bash
 poretools hist --theme-bw --min-length 0 --max-length 20000 --num-bins 39 --saveas reads.2D.hist.png $fast5_dir
 ```
 
 Determine read lengths:
-```
+```bash
 samtools faidx reads.2D.fasta
 cat reads.2D.fasta.fai | grep "_Basecall_2D_2d" | cut -f 1,2 > reads.2D.length.txt
 ```
+
+## Assembly
+
+[Canu](https://canu.readthedocs.io/) is a common de novo assembler for Nanopore long reads. It performs error correction, but additional polishing is helpful. [Nanopolish](https://github.com/jts/nanopolish) can calculate an improved consensus sequence for a draft genome assembly.
+
+If you have both Illumina and Nanopore data, then [SPAdes](http://bioinf.spbau.ru/spades) is a good option for hybrid assembly. SPAdes will use Nanopore reads for gap closure and repeat resolution.
+
+## Additional info
+
+PoreCamp is a training bootcamp based around Oxford Nanopore MinION sequencing that provides great [tutorials](https://porecamp.github.io/2017/) for basic processing of the data.
