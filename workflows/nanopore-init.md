@@ -1,12 +1,14 @@
-# Basic QC and processing of Oxford Nanopore Technologies (ONT) data
+# Processing of Oxford Nanopore Technologies (ONT) data
 
 
 ## Sequencing
 
 There are multiple sequencing protocols. The basic one is 1D, which is analogous to Illumina's single-read option where each DNA fragment is sequenced once. For higher accuracy, there was a 2D workflow where each fragment will generate both a template and complement reads (sepated by hairpin). In May 2017, ONT replaced the 2D system (part of a legal dispute since Pacific Biosciences patented the hairpin approach) with 1D^2 or "1D squared". 
 
-During a standard MinION run with a single unbarcoded sample, the MinKNOW software writes a FAST5 file for each DNA 
-molecule in a local directory. These FAST5 files contain aggregated signal measurements and may be basecalled.
+During a standard MinION run with a single unbarcoded sample, the MinKNOW software writes a FAST5 file for each DNA molecule in a local directory. These FAST5 files contain aggregated signal measurements and may be basecalled.
+
+FAST5 files overview from [Simpson Lab blog](http://simpsonlab.github.io/2017/09/06/nanopolish-v0.8.0/):
+> Oxford Nanopore’s sequencers measure the disruption in electric current caused by single-stranded DNA moving through the nanopore. The device samples the current six thousand times per second and writes the samples to a FAST5 file. We refer to these measurements as “the raw signal” or “the raw samples”, or simply “the raw”. For the past three years nanopore basecallers have converted the raw samples into segments called “events”, with the boundaries between events roughly corresponding to movements of DNA through the pore (for a discussion of the key concepts behind nanopore data analysis see my slides from this year’s AGBT). After the samples are segmented into events, the basecaller predicts which k-mer was in the pore when the samples for each event were taken. The basecalling results are stored in a new FAST5 file that has a table containing every event and its k-mer label.
 
 ## Basecalling
 
