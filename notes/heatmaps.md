@@ -109,3 +109,21 @@ http://mev.tm4.org/
 > WebMeV (Multiple Experiment Viewer) is a cloud-based application supporting analysis, visualization, and stratification of large genomic data, particularly for RNASeq and microarray data.
 
 ![image](https://cloud.githubusercontent.com/assets/6363505/20319258/73762a5e-ab3b-11e6-829f-ad84cb26407d.png)
+
+
+## Next Generation Clustered Heat Map Tool (NG-CHM)
+
+http://bioinformatics.mdanderson.org/testchm/
+
+> Next-Generation (Clustered) Heat Maps are interactive heat maps that enable the user to zoom and pan across the heatmap, alter its color scheme, generate production quality PDFs, and link out from rows, columns, and individual heatmap entries to related statistics, databases and other information.
+
+![image](https://user-images.githubusercontent.com/6363505/31510128-cb6de678-af51-11e7-96ed-dd8d3db94316.png)
+
+
+## Clustergrammer
+
+http://amp.pharm.mssm.edu/clustergrammer/
+
+> Clustergrammer is a web-based tool for visualizing and analyzing high-dimensional data as interactive and shareable hierarchically clustered heatmaps. Clustergrammer enables intuitive exploration of high-dimensional data and has several optional biology-specific features.
+
+![image](https://user-images.githubusercontent.com/6363505/31510322-592e408e-af52-11e7-857a-33e747b63e06.png)
