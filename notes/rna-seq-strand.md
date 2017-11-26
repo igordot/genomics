@@ -14,13 +14,13 @@
 
 Strand-specific protocols
 ([ref](http://onetipperday.sterding.com/2012/07/how-to-tell-which-library-type-to-use.html)):
-![](http://3.bp.blogspot.com/-BkupUsIrnXk/UBbmmmx6T8I/AAAAAAAAAUU/_rcrd_ahT48/s1600/strand.png)
+![](https://3.bp.blogspot.com/-BkupUsIrnXk/UBbmmmx6T8I/AAAAAAAAAUU/_rcrd_ahT48/s1600/strand.png)
 
 ***
 
 Three widely used protocols for strand-specific RNA sequencing
 ([ref](http://www.nature.com/neuro/journal/v17/n11/full/nn.3814.html)):
-![](http://www.nature.com/neuro/journal/v17/n11/images/nn.3814-F3.jpg)
+![](https://images.nature.com/full/nature-assets/neuro/journal/v17/n11/images/nn.3814-F3.jpg)
 
 ***
 
