@@ -8,19 +8,20 @@ use Bio::SeqIO;
 
 my $HELP = <<HELP;
 
-  Predict MHC-I binding for ANNOVAR-annotated point mutations using IEDB MHC class I binding prediction tool.
+  Predict MHC-I and MHC-II binding for ANNOVAR-annotated point mutations using IEDB MHC binding prediction tool.
   Protein coding changes are annotated using ANNOVAR.
-  Binding predictions are calculated by IEDB MHC class I binding prediction tool using consensus method.
+  Binding predictions are calculated by IEDB MHC class I/II binding prediction tool using consensus method.
+  MHC class is selected automatically based on the binding tool.
 
   Usage:
-    perl mut-mhc-i-binding.pl base_name avinput_file annovar_scripts_dir annovar_refgene_txt iedb_mhc_i_dir
+    perl mut-mhc-binding.pl base_name avinput_file annovar_scripts_dir annovar_refgene_txt iedb_mhc_dir
 
   Arguments:
     base_name             output prefix
     avinput_file          ANNOVAR avinput file - 5 required cols (chr, start, end, ref, alt) and then optional cols
     annovar_scripts_dir   ANNOVAR scripts directory
     annovar_refgene_txt   ANNOVAR refGene.txt reference file
-    iedb_mhc_i_dir        IEDB MHC_I binding tool directory (tested with version 2.17)
+    iedb_mhc_dir          IEDB MHC I or II binding tool directory (tested with version 2.17)
 
 HELP
 
@@ -36,7 +37,7 @@ sub main {
 	my $avinput = $ARGV[1];
 	my $annovar_scripts_dir = $ARGV[2];
 	my $annovar_refgene_txt = $ARGV[3];
-	my $iedb_mhc_i_dir = $ARGV[4];
+	my $iedb_mhc_dir = $ARGV[4];
 
 	# check that inputs exist
 	unless ( -e $avinput ) {
@@ -48,11 +49,11 @@ sub main {
 	unless ( -e $annovar_refgene_txt ) {
 		die "\n\n ERROR: $annovar_refgene_txt does not exist \n\n";
 	}
-	unless ( -d $iedb_mhc_i_dir ) {
-		die "\n\n ERROR: $iedb_mhc_i_dir does not exist \n\n";
+	unless ( -d $iedb_mhc_dir ) {
+		die "\n\n ERROR: $iedb_mhc_dir does not exist \n\n";
 	}
 
-	# check that the ANNOVAR and IEDB scripts exist
+	# check that the ANNOVAR scripts exist
 	my $annovar_annotate_pl = "${annovar_scripts_dir}/annotate_variation.pl";
 	unless ( -e $annovar_annotate_pl ) {
 		die "\n\n ERROR: $annovar_annotate_pl does not exist \n\n";
@@ -61,9 +62,22 @@ sub main {
 	unless ( -e $annovar_coding_change_pl ) {
 		die "\n\n ERROR: $annovar_coding_change_pl does not exist \n\n";
 	}
-	my $predict_binding_py = "${iedb_mhc_i_dir}/src/predict_binding.py";
-	unless ( -e $predict_binding_py ) {
-		die "\n\n ERROR: $predict_binding_py does not exist \n\n";
+
+	# check that the IEDB scripts exist and determine class based on the available script
+	my $mhc_class;
+	my $predict_binding_py;
+	my $predict_binding_i_py = "${iedb_mhc_dir}/src/predict_binding.py";
+	my $predict_binding_ii_py = "${iedb_mhc_dir}/mhc_II_binding.py";
+	if ( -e $predict_binding_i_py ) {
+		$mhc_class = "I";
+		$predict_binding_py = $predict_binding_i_py;
+	}
+	elsif ( -e $predict_binding_ii_py ) {
+		$mhc_class = "II";
+		$predict_binding_py = $predict_binding_ii_py;
+	}
+	else {
+		die "\n\n ERROR: binding.py does not exist \n\n";
 	}
 
 	# peptide length for binding predictions (and preparing binding prediction input sequences)
@@ -78,8 +92,19 @@ sub main {
 	say "format coding change";
 	my $mutpad_fa = format_coding_change_fa($base_name, $cod_change_fa, $peptide_length);
 
+	# update file prefix since the rest will depend on MHC class
+	$base_name = $base_name . ".MHC-" . $mhc_class;
+
 	say "predict binding";
-	my $bindpred_txt = predict_mhc_i_binding($base_name, $mutpad_fa, $peptide_length, $predict_binding_py);
+	my $bindpred_txt;
+	if ($mhc_class eq "I") {
+		say "MHC class: I";
+		$bindpred_txt = predict_mhc_i_binding($base_name, $mutpad_fa, $peptide_length, $predict_binding_py);
+	}
+	if ($mhc_class eq "II") {
+		say "MHC class: II";
+		$bindpred_txt = predict_mhc_ii_binding($base_name, $mutpad_fa, $peptide_length, $predict_binding_py);
+	}
 
 	say "annotate binding predictions";
 	my $annot_txt = annotate_binding_predictions($base_name, $bindpred_txt, $evf);
@@ -213,8 +238,8 @@ sub predict_mhc_i_binding {
 	my $peptide_length = $_[2];
 	my $predict_binding_py = $_[3];
 
-	my $raw_out_file = "${base_name}.bindpred.${peptide_length}.raw.txt";
-	my $out_file = "${base_name}.bindpred.${peptide_length}.txt";
+	my $raw_out_file = "${base_name}.${peptide_length}.raw.txt";
+	my $out_file = "${base_name}.${peptide_length}.txt";
 
 	# delete output if already exists
 	if ( -e $raw_out_file ) {
@@ -224,7 +249,7 @@ sub predict_mhc_i_binding {
 	# my @alleles = ('HLA-A*01:01');
 	# my @alleles = ('HLA-A*01:01', 'HLA-A*02:01');
 
-	# a reference panel of 27 alleles
+	# a reference panel of 27 alleles (human HLA reference set with maximal population coverage)
 	# http://help.iedb.org/hc/en-us/articles/114094151851
 	my @alleles = ('HLA-A*01:01', 'HLA-A*02:01', 'HLA-A*02:03', 'HLA-A*02:06', 'HLA-A*03:01', 'HLA-A*11:01',
 		'HLA-A*23:01', 'HLA-A*24:02', 'HLA-A*26:01', 'HLA-A*30:01', 'HLA-A*30:02', 'HLA-A*31:01','HLA-A*32:01',
@@ -238,6 +263,77 @@ sub predict_mhc_i_binding {
 		# predict_binding.py command
 		# ./src/predict_binding [method] [mhc] [peptide_length] [input_file]
 		my $predict_binding_cmd = "$predict_binding_py consensus $_ $peptide_length $mutpad_fa >> $raw_out_file";
+		system $predict_binding_cmd;
+	}
+
+	# confirm that binding predictions file generated
+	unless ( -e $raw_out_file ) {
+		die "\n\n ERROR: $raw_out_file DOES NOT EXIST \n\n";
+	}
+
+	# header for the combined file
+	my $bindpred_header = `cat $raw_out_file | head -1 | cut -f 1,5-`;
+	system "printf \"line_id\ttranscript_id\tp_change\taa_padded\t${bindpred_header}\" > $out_file";
+
+	# clean up input files for joining
+	system "cat $mutpad_fa | grep '^>' | cut -c 2- | tr '|' '\t' | LC_ALL=C sort -k1,1 > ${mutpad_fa}.txt";
+	system "cat $raw_out_file | grep -v '^allele' | cut -f 1,2,5- | LC_ALL=C sort -k2,2 > ${raw_out_file}.tmp";
+
+	# join, remove seq col
+	my $join_cmd = 'LC_ALL=C join -t $\'\t\' -a 1 -a 2 -1 1 -2 2';
+	$join_cmd .= " ${mutpad_fa}.txt";
+	$join_cmd .= " ${raw_out_file}.tmp";
+	$join_cmd .= " | cut -f 2-";
+	$join_cmd .= " >> $out_file";
+	system $join_cmd;
+
+	# confirm that binding predictions file generated
+	unless ( -e $out_file ) {
+		die "\n\n ERROR: $out_file DOES NOT EXIST \n\n";
+	}
+
+	# clean up
+	unlink $mutpad_fa;
+	unlink "${mutpad_fa}.txt";
+	unlink "${raw_out_file}.tmp";
+
+	return $out_file;
+}
+
+# run IEDB MHC-II Binding Predictions
+sub predict_mhc_ii_binding {
+	my $base_name = $_[0];
+	my $mutpad_fa = $_[1];
+	my $peptide_length = $_[2];
+	my $predict_binding_py = $_[3];
+
+	my $raw_out_file = "${base_name}.${peptide_length}.raw.txt";
+	my $out_file = "${base_name}.${peptide_length}.txt";
+
+	# delete output if already exists
+	if ( -e $raw_out_file ) {
+		unlink $raw_out_file;
+	}
+
+	# my @alleles = ('HLA-A*01:01');
+	my @alleles = ('DRB1*01:01', 'DRB1*01:02');
+
+	# a reference panel of 27 alleles
+	# http://help.iedb.org/hc/en-us/articles/114094151851
+	#my @alleles = ('HLA-A*01:01', 'HLA-A*02:01', 'HLA-A*02:03', 'HLA-A*02:06', 'HLA-A*03:01', 'HLA-A*11:01',
+	#	'HLA-A*23:01', 'HLA-A*24:02', 'HLA-A*26:01', 'HLA-A*30:01', 'HLA-A*30:02', 'HLA-A*31:01','HLA-A*32:01',
+	#	'HLA-A*33:01', 'HLA-A*68:01', 'HLA-A*68:02', 'HLA-B*07:02', 'HLA-B*08:01', 'HLA-B*15:01', 'HLA-B*35:01',
+	#	'HLA-B*40:01', 'HLA-B*44:02', 'HLA-B*44:03', 'HLA-B*51:01', 'HLA-B*53:01', 'HLA-B*57:01', 'HLA-B*58:01');
+
+	# make predictions for each allele
+	foreach (@alleles) {
+		say "running predictions for allele $_";
+
+		# mhc_II_binding.py command
+		# python mhc_II_binding.py prediction_method_name allele_name input_sequence_file_name
+		# Example: python mhc_II_binding.py consensus3 HLA-DRB1*03:01 test.fasta
+		# my $predict_binding_cmd = "$predict_binding_py consensus3 $_ $peptide_length $mutpad_fa >> $raw_out_file";
+		my $predict_binding_cmd = "$predict_binding_py consensus3 $_ $mutpad_fa >> $raw_out_file";
 		system $predict_binding_cmd;
 	}
 

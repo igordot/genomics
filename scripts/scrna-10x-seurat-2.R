@@ -128,8 +128,8 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
   # check for high mitochondrial percentage or low UMI content
   png("qc.correlations.unfiltered.png", res = 200, width = 10, height = 5, units = "in")
     par(mfrow = c(1, 2))
-    GenePlot(s_obj, gene1 = "nUMI", gene2 = "percent.mito", cex.use = 1.2, col.use = color_scheme)
-    GenePlot(s_obj, gene1 = "nUMI", gene2 = "nGene", cex.use = 1.2, col.use = color_scheme)
+    GenePlot(s_obj, gene1 = "nUMI", gene2 = "percent.mito", cex.use = 0.5, col.use = color_scheme)
+    GenePlot(s_obj, gene1 = "nUMI", gene2 = "nGene", cex.use = 0.5, col.use = color_scheme)
   dev.off()
 
   # check distribution of gene counts and mitochondrial percentage
@@ -289,10 +289,12 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   s_obj = NormalizeData(s_obj, normalization.method = "LogNormalize", scale.factor = 10000, display.progress = FALSE)
 
   # save counts matrix as a standard text file and gzip
-  counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3)
-  norm_matrix_filename = "counts.normalized.txt"
-  write.table(counts_norm, file = norm_matrix_filename, quote = FALSE, sep = "\t", col.names = NA)
-  system(paste0("gzip ", norm_matrix_filename))
+  # counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3)
+  # norm_matrix_filename = "counts.normalized.txt"
+  # write.table(counts_norm, file = norm_matrix_filename, quote = FALSE, sep = "\t", col.names = NA)
+  # system(paste0("gzip ", norm_matrix_filename))
+  counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
+  write_csv(counts_norm, path = "counts.normalized.csv.gz")
 
   # log to file
   write(glue("filtered genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
@@ -342,7 +344,7 @@ calculate_variance = function(seurat_obj) {
 
   message("\n\n ========== Seurat::PCA() ========== \n\n")
 
-  # PCA on the scaled data (can use PCAFast for bigger dataset)
+  # PCA on the scaled data
   # PCA calculation stored in object@dr$pca
   s_obj = RunPCA(s_obj, pc.genes = s_obj@var.genes, pcs.compute = 50,
                  do.print = FALSE, pcs.print = 3, genes.print = 5)
@@ -535,7 +537,7 @@ plot_genes = function(seurat_obj, genes, name) {
   png(glue("{name}.tsne.png"), res = 200, width = 10, height = 8, units = "in")
     FeaturePlot(seurat_obj, genes, pt.size = 0.5, cols.use = featplot_colors, no.axes = TRUE, no.legend = TRUE)
   dev.off()
-  pdf(glue("{name}.tsne.pdf"), width = 10, height = 8)
+  pdf(file = glue("{name}.tsne.pdf"), width = 10, height = 8)
     FeaturePlot(seurat_obj, genes, pt.size = 0.5, cols.use = featplot_colors, no.axes = TRUE, no.legend = TRUE)
   dev.off()
 
@@ -632,26 +634,28 @@ calculate_cluster_markers = function(seurat_obj, label, test) {
   if (!dir.exists(markers_dir)) dir.create(markers_dir)
 
   message("marker test: ", test)
-  all_markers = FindAllMarkers(seurat_obj, logfc.threshold = 0.25, min.pct = 0.25, min.diff.pct = -Inf,
+  all_markers = FindAllMarkers(seurat_obj, logfc.threshold = log(1.5), min.pct = 0.20, min.diff.pct = -Inf,
                                test.use = test, only.pos = FALSE, print.bar = FALSE)
 
   # do some light filtering and clean up (different tests return slighly different output)
   if (test == "roc") {
     # ROC test returns the classification power (ranging from 0 - random, to 1 - perfect)
-    all_markers = all_markers %>% select(cluster, gene, avg_logFC, myAUC, power) %>%
-      filter(myAUC > 0.3 & power > 0.3) %>%
+    all_markers = all_markers %>%
+      select(cluster, gene, avg_logFC, myAUC, power) %>%
+      filter(power > 0.4) %>%
       mutate(avg_logFC = round(avg_logFC, 3), myAUC = round(myAUC, 3), power = round(power, 3)) %>%
-      arrange(cluster, -myAUC)
-    top_markers = all_markers %>% group_by(cluster) %>% top_n(20, myAUC)
+      arrange(cluster, -power)
+    top_markers = all_markers %>% filter(avg_logFC > 0) %>% group_by(cluster) %>% top_n(20, power)
   } else {
     # wilcox: Wilcoxon rank sum test (default in Seurat 2)
     # bimod: likelihood-ratio test for single cell gene expression based on zero-inflated data (default in Seurat 1)
     # tobit: Tobit-test for differential gene expression as in Trapnell et al., Nature Biotech, 2014
-    all_markers = all_markers %>% select(cluster, gene, avg_logFC, p_val, p_val_adj) %>%
-      filter(p_val_adj < 0.01 & abs(avg_logFC) > 1) %>%
+    all_markers = all_markers %>%
+      select(cluster, gene, avg_logFC, p_val, p_val_adj) %>%
+      filter(p_val_adj < 0.01 & abs(avg_logFC) > log(1.5)) %>%
       mutate(avg_logFC = round(avg_logFC, 3)) %>%
       arrange(cluster, p_val_adj, p_val)
-    top_markers = all_markers %>% group_by(cluster) %>% top_n(20, abs(avg_logFC))
+    top_markers = all_markers %>% filter(avg_logFC > 0) %>% group_by(cluster) %>% top_n(20, avg_logFC)
   }
 
   all_markers_csv = glue("{markers_dir}/markers.{label}.{test}.all.csv")
@@ -672,14 +676,8 @@ calculate_cluster_markers = function(seurat_obj, label, test) {
 
     # plot top genes if enough were identified
     filename_label = glue("{markers_dir}/markers.{label}-{clust_name}.{test}")
-    cluster_markers = all_markers %>% filter(cluster == clust_name)
+    cluster_markers = top_markers %>% filter(cluster == clust_name)
     if (nrow(cluster_markers) > 9) {
-
-      if (test == "roc") {
-        cluster_markers = cluster_markers %>% arrange(-myAUC)
-      } else {
-        cluster_markers = cluster_markers %>% arrange(p_val)
-      }
 
       top_cluster_markers = cluster_markers %>% head(12) %$% gene
       plot_genes(seurat_obj, genes = top_cluster_markers, name = filename_label)
@@ -695,9 +693,12 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
 
   message("\n\n ========== calculate cluster DE genes ========== \n\n")
 
+  # create a separate sub-directory for differential expression results
+  de_dir = "diff-expression"
+  if (!dir.exists(de_dir)) dir.create(de_dir)
+
   # common settings
   num_de_genes = 100
-  heatmap_colors = colorRampPalette(brewer.pal(9, "YlOrRd"))(50)
 
   # cluster names
   clusters = seurat_obj@ident %>% unique() %>% as.character() %>% sort()
@@ -716,9 +717,8 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
     message("cluster cells: ", ncol(clust_obj@data))
     message("cluster groups: ", paste(levels(clust_obj@ident), collapse = ", "))
 
-
-    # do differential expression if cluster contains multiple groups and multiple cells per group
-    if (length(unique(clust_obj@ident)) > 1 && min(table(clust_obj@ident)) > 5) {
+    # continue if cluster has multiple groups and more than 100 cells and more than 10 cells per group
+    if (length(unique(clust_obj@ident)) > 1 && ncol(clust_obj@data) > 100 && min(table(clust_obj@ident)) > 10) {
 
       # iterate through sample/library combinations (relevant if more than two)
       group_combinations = combn(levels(clust_obj@ident), m = 2, simplify = TRUE)
@@ -727,44 +727,43 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
         # determine combination
         s1 = group_combinations[1, combination_num]
         s2 = group_combinations[2, combination_num]
-        comparison_name = paste0(s1, "-vs-", s2)
+        comparison_name = glue("{s1}-vs-{s2}")
         message("comparison: ", comparison_name)
 
-        filename_label = paste0("de.", label, "-", clust_name, ".", comparison_name, ".top", num_de_genes)
+        filename_label = glue("{de_dir}/de.{label}-{clust_name}.{comparison_name}")
 
-        # find markers (differentially expressed genes) for identity classes (likelihood-ratio test)
-        de_genes = FindMarkers(clust_obj, ident.1 = s1, ident.2 = s2, test.use = "bimod",
-                               logfc.threshold = 0.25, min.pct = 0.25,
+        # find differentially expressed genes (default Wilcoxon rank sum test)
+        de_genes = FindMarkers(clust_obj, ident.1 = s1, ident.2 = s2, test.use = "wilcox",
+                               logfc.threshold = log(1.1), min.pct = 0.1,
                                only.pos = FALSE, print.bar = FALSE)
 
-        # most significant genes
-        top_genes = de_genes %>% rownames_to_column("gene") %>% top_n(num_de_genes, -p_val) %>% dplyr::arrange(-avg_diff)
+        # do some light filtering and clean up
+        de_genes = de_genes %>%
+          rownames_to_column("gene") %>%
+          select(gene, avg_logFC, p_val, p_val_adj) %>%
+          filter(p_val_adj < 0.01) %>%
+          mutate(avg_logFC = round(avg_logFC, 3)) %>%
+          arrange(p_val_adj, p_val)
 
-        # png heatmap
-        heatmap_png = paste0("heatmap.", filename_label, ".png")
-        message("heatmap png: ", heatmap_png)
-        png(heatmap_png, res = 200, width = 10, height = 10, units = "in")
-        DoHeatmap(clust_obj, genes.use = top_genes$gene, order.by.ident = TRUE, slim.col.label = TRUE,
-                  do.scale = TRUE, remove.key = TRUE,
-                  col.use = heatmap_colors, cex.col = 0.5, disp.min = -1, disp.max = 2)
-        dev.off()
-        Sys.sleep(1)
-
-        # pdf heatmap
-        heatmap_pdf = paste0("heatmap.", filename_label, ".pdf")
-        message("heatmap pdf: ", heatmap_pdf)
-        pdf(heatmap_pdf, width = 10, height = 10)
-        DoHeatmap(clust_obj, genes.use = top_genes$gene, order.by.ident = TRUE, slim.col.label = TRUE,
-                  do.scale = TRUE, remove.key = TRUE,
-                  col.use = heatmap_colors, cex.col = 0.5, disp.min = -1, disp.max = 2)
-        dev.off()
-        Sys.sleep(1)
-
-        # save stats table (sorted by p-value)
-        top_genes = top_genes %>% dplyr::arrange(p_val)
-        genes_csv = paste0(filename_label, ".genes.csv")
+        # save stats table
+        genes_csv = glue("{filename_label}.csv")
         message("genes: ", genes_csv)
-        write_excel_csv(top_genes, path = genes_csv)
+        write_excel_csv(de_genes, path = genes_csv)
+
+        # heatmap of top genes if any significant genes are present
+        if (nrow(de_genes) > 5) {
+          top_de_genes = de_genes %>% top_n(num_de_genes, -p_val_adj) %>% arrange(avg_logFC) %>% pull(gene)
+          plot_hm = DoHeatmap(clust_obj, genes.use = top_de_genes,
+                              use.scaled = TRUE, remove.key = TRUE, slim.col.label = TRUE,
+                              col.low = "lemonchiffon", col.mid = "gold2", col.high = "red3",
+                              cex.row = 8, cex.col = 0.5, group.cex = 15, disp.min = -2, disp.max = 2)
+          heatmap_png = glue("{filename_label}.top{num_de_genes}.heatmap.png")
+          message("heatmap png: ", heatmap_png)
+          ggsave(heatmap_png, plot = plot_hm, width = 15, height = 10, units = "in")
+          heatmap_pdf = glue("{filename_label}.top{num_de_genes}.heatmap.pdf")
+          message("heatmap pdf: ", heatmap_pdf)
+          ggsave(heatmap_pdf, plot = plot_hm, width = 15, height = 10, units = "in")
+        }
 
       }
 
