@@ -10,7 +10,7 @@ my $HELP = <<HELP;
   Combine multiple FASTQs so each sample ends up with only one R1 and R2 file.
 
   Usage:
-    perl merge-fastqs.pl search_dir out_dir
+    perl fastq-merge.pl search_dir out_dir
 
   Arguments:
     search_dir   directory with original files

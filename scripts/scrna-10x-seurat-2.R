@@ -42,6 +42,7 @@ load_libraries = function() {
   suppressPackageStartupMessages(library(RColorBrewer))
   suppressPackageStartupMessages(library(tidyverse))
   suppressPackageStartupMessages(library(cowplot))
+  suppressPackageStartupMessages(library(ggthemes))
 
 }
 
@@ -65,6 +66,10 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
   counts_matrix_filename = "counts.raw.txt"
   write.table(as.matrix(counts_matrix), file = counts_matrix_filename, quote = FALSE, sep = "\t", col.names = NA)
   system(paste0("gzip ", counts_matrix_filename))
+
+  # save counts matrix as a csv file (to be consistent with the rest of the tables)
+  raw_data = counts_matrix %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
+  write_csv(raw_data, path = "counts.raw.csv.gz")
 
   message("\n\n ========== create seurat object ========== \n\n")
 
@@ -122,14 +127,14 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
   message("\n\n ========== nGene/nUMI/percent_mito plots ========== \n\n")
 
   dist_unfilt_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
-                             point.size.use = 0.2, x.lab.rot = TRUE, size.title.use = 12, cols.use = color_scheme)
+                             point.size.use = 0.2, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
   cowplot::ggsave("qc.distribution.unfiltered.png", plot = dist_unfilt_plot, width = 10, height = 5, units = "in")
 
   # check for high mitochondrial percentage or low UMI content
   png("qc.correlations.unfiltered.png", res = 200, width = 10, height = 5, units = "in")
     par(mfrow = c(1, 2))
-    GenePlot(s_obj, gene1 = "nUMI", gene2 = "percent.mito", cex.use = 0.5, col.use = color_scheme)
-    GenePlot(s_obj, gene1 = "nUMI", gene2 = "nGene", cex.use = 0.5, col.use = color_scheme)
+    GenePlot(s_obj, gene1 = "nUMI", gene2 = "percent.mito", cex.use = 0.5, col.use = colors_samples)
+    GenePlot(s_obj, gene1 = "nUMI", gene2 = "nGene", cex.use = 0.5, col.use = colors_samples)
   dev.off()
 
   # check distribution of gene counts and mitochondrial percentage
@@ -278,7 +283,7 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   message("filtered cells: ", ncol(s_obj@data))
 
   dist_filt_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
-                           point.size.use = 0.2, x.lab.rot = TRUE, size.title.use = 12, cols.use = color_scheme)
+                           point.size.use = 0.2, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
   cowplot::ggsave("qc.distribution.filtered.png", plot = dist_filt_plot, width = 10, height = 5, units = "in")
 
   # after removing unwanted cells from the dataset, normalize the data
@@ -289,10 +294,8 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   s_obj = NormalizeData(s_obj, normalization.method = "LogNormalize", scale.factor = 10000, display.progress = FALSE)
 
   # save counts matrix as a standard text file and gzip
-  # counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3)
-  # norm_matrix_filename = "counts.normalized.txt"
-  # write.table(counts_norm, file = norm_matrix_filename, quote = FALSE, sep = "\t", col.names = NA)
-  # system(paste0("gzip ", norm_matrix_filename))
+  # object@data stores normalized and log-transformed single cell expression
+  # used for visualizations, such as violin and feature plots, most diff exp tests, finding high-variance genes
   counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
   write_csv(counts_norm, path = "counts.normalized.csv.gz")
 
@@ -361,7 +364,7 @@ calculate_variance = function(seurat_obj) {
 
   # Graphs the output of a PCA analysis Cells are colored by their identity class
   png("variance.pca.png", res = 200, width = 8, height = 6, units = "in")
-    PCAPlot(s_obj, 1, 2, pt.size = 1.5, cols.use = color_scheme)
+    PCAPlot(s_obj, 1, 2, pt.size = 1.5, cols.use = colors_samples)
   dev.off()
 
   message("\n\n ========== Seurat::PCHeatmap() ========== \n\n")
@@ -414,12 +417,13 @@ calculate_clusters = function(seurat_obj, num_pcs) {
 
   # graph-based clustering approach
   # clusters are saved in the object@ident slot
-  # save the SNN so that the SLM algorithm can be rerun using the same graph, but with different resolutions
+  # save the SNN so that the algorithm can be rerun using the same graph, but with different resolutions
   # increased resolution values lead to more clusters (0.6-1.2 for 3K cells, 2-4 for 33K cells)
   # try multiple resolutions here (will be saved as s_obj@data.info columns)
-  # s_obj = FindClusters(seurat_obj, pc.use = 1:num_pcs, print.output = FALSE, save.SNN = TRUE)
-  s_obj = FindClusters(s_obj, reduction.type = "pca", dims.use = 1:num_pcs, resolution = seq(0.1, 2.1, 0.2),
-                       save.SNN = TRUE, print.output = FALSE)
+  # algorithm: 1 = original Louvain; 2 = Louvain with multilevel refinement; 3 = SLM
+  s_obj = FindClusters(s_obj, reduction.type = "pca", dims.use = 1:num_pcs,
+                       algorithm = 3, resolution = seq(0.1, 2.1, 0.2),
+                       save.SNN = TRUE, force.recalc = TRUE, print.output = FALSE)
 
   message("new meta.data fields: ", paste(colnames(s_obj@meta.data), collapse = ", "))
   message("new identities: ", paste(levels(s_obj@ident), collapse = ", "))
@@ -434,18 +438,28 @@ calculate_clusters = function(seurat_obj, num_pcs) {
 
   # reduce point size for larger datasets
   tsne_pt_size = 1
-  if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.6
-  if (ncol(s_obj@data) > 15000) tsne_pt_size = 0.4
+  if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.8
+  if (ncol(s_obj@data) > 15000) tsne_pt_size = 0.6
 
   # plot tSNE based on original sample names
   s_obj = SetAllIdent(s_obj, id = "orig.ident")
-  plot_tsne = TSNEPlot(s_obj, do.return = TRUE, pt.size = tsne_pt_size, colors.use = color_scheme)
+  plot_tsne = TSNEPlot(s_obj, do.return = TRUE, pt.size = tsne_pt_size, colors.use = colors_samples)
   cowplot::ggsave(glue("tsne.pcs{num_pcs}.original.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
   cowplot::ggsave(glue("tsne.pcs{num_pcs}.original.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
 
-  # plot clusters for calculated resolutions
+  # rename and plot clusters for calculated resolutions
   res_cols = grep("^res.", colnames(s_obj@meta.data), value = TRUE)
   for (res in res_cols) {
+
+    # check if the resolution still has original labels (characters starting with 0)
+    if (min(s_obj@meta.data[, res]) == "0") {
+      # relabel identities so they start with 1 and not 0
+      s_obj@meta.data[, res] = as.numeric(s_obj@meta.data[, res]) + 1
+      # pad with 0s to avoid sorting issues
+      s_obj@meta.data[, res] = str_pad(s_obj@meta.data[, res], width = 2, side = "left", pad = "0")
+      # pad with "C" to avoid downstream numeric conversions
+      s_obj@meta.data[, res] = str_c("C", s_obj@meta.data[, res])
+    }
 
     # resolution value based on resolution column name
     res_val = sub("res\\.", "", res)
@@ -487,13 +501,17 @@ plot_clusters = function(seurat_obj, resolution, plot_filename) {
     if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.6
     if (ncol(s_obj@data) > 15000) tsne_pt_size = 0.4
 
-    plot_tsne = TSNEPlot(s_obj, do.return = TRUE, pt.size = tsne_pt_size, colors.use = color_scheme)
+    plot_tsne = TSNEPlot(s_obj, do.return = TRUE, pt.size = tsne_pt_size, colors.use = colors_clusters)
     plot_filename_png = glue("{plot_filename}.png")
     message("save tSNE plot: ", plot_filename_png)
     ggsave(plot_filename_png, plot = plot_tsne, width = 7, height = 6, units = "in")
+    Sys.sleep(1)
     plot_filename_pdf = glue("{plot_filename}.pdf")
     message("save tSNE plot: ", plot_filename_pdf)
     ggsave(plot_filename_pdf, plot = plot_tsne, width = 7, height = 6, units = "in")
+    Sys.sleep(1)
+
+    if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
 
   }
 
@@ -518,9 +536,6 @@ set_resolution = function(seurat_obj, resolution) {
 
   # set identities based on selected resolution
   s_obj = SetAllIdent(s_obj, id = res_col)
-
-  # relabel identities so they start with 1 and not 0
-  levels(s_obj@ident) = as.numeric(levels(s_obj@ident)) + 1
 
   return(s_obj)
 
@@ -552,17 +567,17 @@ plot_genes = function(seurat_obj, genes, name) {
   # skip PDF since every cell has to be plotted and they become too big
   vln_plot = VlnPlot(seurat_obj, features.plot = genes,
                      point.size.use = 0.05, size.title.use = 12, size.x.use = 12, size.y.use = 10,
-                     single.legend = FALSE, cols.use = color_scheme, do.return = TRUE)
+                     single.legend = FALSE, cols.use = colors_clusters, do.return = TRUE)
   ggsave(glue("{name}.violin.png"), plot = vln_plot, width = 15, height = 8, units = "in")
 
-  # expression levels per cluster for bar plots
+  # expression levels per cluster for bar plots (averaging and output are in non-log space)
   cluster_avg_exp = AverageExpression(seurat_obj, genes.use = genes, show.progress = FALSE)
   cluster_avg_exp_long = cluster_avg_exp %>% rownames_to_column("gene") %>% gather(cluster, avg_exp, -gene)
 
   # bar plots
   # create a named color scheme to ensure names and colors are in the proper order
   clust_names = levels(seurat_obj@ident)
-  color_scheme_named = color_scheme[1:length(clust_names)]
+  color_scheme_named = colors_clusters[1:length(clust_names)]
   names(color_scheme_named) = clust_names
   barplot_plot = ggplot(cluster_avg_exp_long, aes(x = cluster, y = avg_exp, fill = cluster)) +
     geom_col(color = "black") +
@@ -583,21 +598,30 @@ calculate_cluster_stats = function(seurat_obj, label) {
 
   message("cluster names: ", paste(levels(seurat_obj@ident), collapse = ", "))
 
+  # compile all cell metadata into a single table
+  seurat_obj = StashIdent(object = seurat_obj, save.name = "cluster")
+  metadata_tbl = seurat_obj@meta.data %>%
+    rownames_to_column("cell") %>% as_tibble() %>%
+    select(cell, nGene, nUMI, percent.mito, orig.ident, cluster) %>%
+    rename(sample = orig.ident)
+  tsne_tbl = seurat_obj@dr$tsne@cell.embeddings %>%
+    round(3) %>% as.data.frame() %>% rownames_to_column("cell") %>% as_tibble()
+  cells_metadata = full_join(metadata_tbl, tsne_tbl, by = "cell") %>% arrange(cell)
+  write_excel_csv(cells_metadata, path = glue("metadata.{label}.csv"))
+
   # get number of cells per cluster
   num_cells_per_cluster = tibble(cluster = seurat_obj@ident)
-  num_cells_per_cluster = num_cells_per_cluster %>% group_by(cluster) %>% summarise(num_cells = n())
-  num_cells_per_cluster_filename = glue("summary.{label}.csv")
-  write_excel_csv(num_cells_per_cluster, path = num_cells_per_cluster_filename)
+  num_cells_per_cluster = num_cells_per_cluster %>% group_by(cluster) %>% summarize(num_cells = n())
+  write_excel_csv(num_cells_per_cluster, path = glue("summary.{label}.csv"))
 
   # create a separate sub-directory for expression values
   exp_dir = "expression"
   if (!dir.exists(exp_dir)) dir.create(exp_dir)
 
-  # gene expression for an "average" single cell in each identity class
+  # gene expression for an "average" cell in each identity class (averaging and output are in non-log space)
   # add add.ident if you want to observe cluster averages separated by replicate
-  # output is in log-space, but averaging is done in non-log space
   cluster_avg_exp = AverageExpression(seurat_obj, show.progress = FALSE)
-  colnames(cluster_avg_exp) = paste0("clust_", colnames(cluster_avg_exp))
+  # colnames(cluster_avg_exp) = paste0("clust_", colnames(cluster_avg_exp))
   cluster_avg_exp = cluster_avg_exp %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
   cluster_avg_exp_filename = glue("{exp_dir}/exp.{label}.mean.csv")
   write_excel_csv(cluster_avg_exp, path = cluster_avg_exp_filename)
@@ -663,7 +687,7 @@ calculate_cluster_markers = function(seurat_obj, label, test) {
   write_excel_csv(all_markers, path = all_markers_csv)
 
   top_markers_csv = glue("{markers_dir}/markers.{label}.{test}.top.csv")
-  message("top markers: ", all_markers_csv)
+  message("top markers: ", top_markers_csv)
   write_excel_csv(top_markers, path = top_markers_csv)
 
   # cluster names
@@ -672,16 +696,13 @@ calculate_cluster_markers = function(seurat_obj, label, test) {
   # get marker genes for each cluster
   for (clust_name in clusters) {
 
-    Sys.sleep(1)
-
     # plot top genes if enough were identified
     filename_label = glue("{markers_dir}/markers.{label}-{clust_name}.{test}")
     cluster_markers = top_markers %>% filter(cluster == clust_name)
     if (nrow(cluster_markers) > 9) {
-
+      Sys.sleep(1)
       top_cluster_markers = cluster_markers %>% head(12) %$% gene
       plot_genes(seurat_obj, genes = top_cluster_markers, name = filename_label)
-
     }
 
   }
@@ -799,7 +820,9 @@ opts = docopt(doc)
 load_libraries()
 
 # global settings
-color_scheme = c(brewer.pal(9, "Set1"), brewer.pal(8, "Accent"), brewer.pal(8, "Dark2"))
+# color_scheme = c(brewer.pal(9, "Set1"), brewer.pal(8, "Accent"), brewer.pal(8, "Dark2"))
+colors_samples = c(brewer.pal(9, "Set1"), brewer.pal(8, "Accent"), brewer.pal(8, "Dark2"))
+colors_clusters = c(tableau_color_pal("tableau10")(10), stata_pal("s2color")(15))
 
 # analysis info
 analysis_step = "unknown"
@@ -898,7 +921,7 @@ if (opts$create) {
       # plot cluster markers
       calculate_cluster_markers(seurat_obj, label = res_label, test = "roc")
       calculate_cluster_markers(seurat_obj, label = res_label, test = "wilcox")
-      calculate_cluster_markers(seurat_obj, label = res_label, test = "bimod")
+      # calculate_cluster_markers(seurat_obj, label = res_label, test = "bimod")
 
     }
 
