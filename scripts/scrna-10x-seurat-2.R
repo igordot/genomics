@@ -2,22 +2,28 @@
 
 
 "
-Analysis of 10x Genomics Chromium single cell RNA-seq data using Seurat (version 2.1) starting with Cell Ranger output.
+Analysis of 10x Genomics Chromium single cell RNA-seq data using Seurat (version 2.2) starting with Cell Ranger output.
 
-Main steps:
+Basic workflow steps:
   1 - create - import counts matrix, perform initial QC, and calculate various variance metrics (slowest step)
   2 - cluster - perform clustering based on number of PCs
-  3 - identify - identify clusters based on resolution (increased resolution results in more clusters)
+  3 - identify - identify clusters based on specified resolution (increased resolution results in more clusters)
 
-Extra steps:
-  diff - differential expression between samples/libraries within clusters
+Optional steps:
+  combine - merge multiple samples/libraries
+  cca - perform CCA for alignment (batch correction) across multiple sample batches
+  align - perform alignment based on number of CCs (after performing CCA)
+  de - differential expression between samples/libraries within clusters
 
 Usage:
-  scrna-10x-seurat.R create <analysis_dir> (<sample_name> <sample_dir>)... [--min_genes=<n> --max_genes=<n> --mt=<n>]
-  scrna-10x-seurat.R cluster <analysis_dir> <num_pcs>
-  scrna-10x-seurat.R identify <analysis_dir> <resolution>
-  scrna-10x-seurat.R diff <analysis_dir> <resolution>
-  scrna-10x-seurat.R --help
+  scrna-10x-seurat-2.R create <analysis_dir> <sample_name> <sample_dir> [--min_genes=<n> --max_genes=<n> --mt=<n>]
+  scrna-10x-seurat-2.R cluster <analysis_dir> <num_pcs>
+  scrna-10x-seurat-2.R identify <analysis_dir> <resolution>
+  scrna-10x-seurat-2.R combine <analysis_dir> <sample_analysis_dir>...
+  scrna-10x-seurat-2.R cca <analysis_dir> (<batch_name> <batch_analysis_dir>)...
+  scrna-10x-seurat-2.R align <analysis_dir> <num_ccs>
+  scrna-10x-seurat-2.R de <analysis_dir> <resolution>
+  scrna-10x-seurat-2.R --help
 
 Options:
   --min_genes=<n>   cutoff for minimum number of genes per cell (2nd percentile if not specified)
@@ -46,116 +52,9 @@ load_libraries = function() {
 
 }
 
-# convert a sparse matrix of counts to a Seurat object and generate some QC plots
-create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL) {
-
-  message("\n\n ========== save raw counts matrix ========== \n\n")
-
-  # remove genes with very few counts
-  counts_matrix = counts_matrix[Matrix::rowSums(counts_matrix) >= 5, ]
-
-  message("input genes: ", nrow(counts_matrix))
-  message("input cells: ", ncol(counts_matrix))
-  message(" ")
-
-  # log to file
-  write(glue("input genes: {nrow(counts_matrix)}"), file = "create.log", append = TRUE)
-  write(glue("input cells: {ncol(counts_matrix)}"), file = "create.log", append = TRUE)
-
-  # save counts matrix as a standard text file and gzip
-  counts_matrix_filename = "counts.raw.txt"
-  write.table(as.matrix(counts_matrix), file = counts_matrix_filename, quote = FALSE, sep = "\t", col.names = NA)
-  system(paste0("gzip ", counts_matrix_filename))
-
-  # save counts matrix as a csv file (to be consistent with the rest of the tables)
-  raw_data = counts_matrix %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
-  write_csv(raw_data, path = "counts.raw.csv.gz")
-
-  message("\n\n ========== create seurat object ========== \n\n")
-
-  # keep all genes expressed in >= 3 cells, keep all cells with >= 200 genes
-  # CreateSeuratObject(raw.data = pbmc.data, min.cells = 3, min.genes = 200, project = "10X_PBMC")
-
-  if (is.null(proj_name)) {
-
-    # if name is not set, then it's a manually merged counts matrix
-    # save.raw parameter causes errors in v2
-    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 10, min.genes = 300, project = "proj",
-                               names.field = 1, names.delim = ":")
-
-  } else if (proj_name == "aggregated") {
-
-    # multiple libraries combined using Cell Ranger (cellranger aggr)
-
-    # setup taking into consideration aggregated names delimiter
-    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 10, min.genes = 300, project = proj_name,
-                               names.field = 2, names.delim = "-")
-
-    # import cellranger aggr sample sheet
-    sample_sheet_csv = paste0(sample_dir, "/outs/aggregation_csv.csv")
-    sample_sheet = read.csv(sample_sheet_csv, stringsAsFactors = FALSE)
-    message("samples: ", paste(sample_sheet[, 1], collapse=", "))
-
-    # change s_obj@meta.data$orig.ident sample identities from numbers to names
-    s_obj@meta.data$orig.ident = factor(sample_sheet[s_obj@meta.data$orig.ident, 1])
-    # set s_obj@ident to the new s_obj@meta.data$orig.ident
-    s_obj = SetAllIdent(s_obj, id = "orig.ident")
-
-  } else {
-
-    stop("project name set to unknown value")
-
-  }
-
-  message(glue("imported genes: {nrow(s_obj@data)}"))
-  message(glue("imported cells: {ncol(s_obj@data)}"))
-  message(" ")
-
-  # log to file
-  write(glue("imported genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
-  write(glue("imported cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
-
-  # nGene and nUMI are automatically calculated for every object by Seurat
-  # calculate the percentage of mitochondrial genes here and store it in percent.mito using the AddMetaData
-  mt_genes = grep("^MT-", rownames(s_obj@data), ignore.case = TRUE, value = TRUE)
-  percent_mt = Matrix::colSums(s_obj@raw.data[mt_genes, ]) / Matrix::colSums(s_obj@raw.data)
-  percent_mt = round(percent_mt * 100, digits = 3)
-
-  # add columns to object@meta.data, and is a great place to stash QC stats
-  s_obj = AddMetaData(s_obj, metadata = percent_mt, col.name = "percent.mito")
-
-  message("\n\n ========== nGene/nUMI/percent_mito plots ========== \n\n")
-
-  dist_unfilt_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
-                             point.size.use = 0.2, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
-  cowplot::ggsave("qc.distribution.unfiltered.png", plot = dist_unfilt_plot, width = 10, height = 5, units = "in")
-
-  # check for high mitochondrial percentage or low UMI content
-  png("qc.correlations.unfiltered.png", res = 200, width = 10, height = 5, units = "in")
-    par(mfrow = c(1, 2))
-    GenePlot(s_obj, gene1 = "nUMI", gene2 = "percent.mito", cex.use = 0.5, col.use = colors_samples)
-    GenePlot(s_obj, gene1 = "nUMI", gene2 = "nGene", cex.use = 0.5, col.use = colors_samples)
-  dev.off()
-
-  # check distribution of gene counts and mitochondrial percentage
-  low_quantiles = c(0.05, 0.02, 0.01, 0.001)
-  high_quantiles = c(0.95, 0.98, 0.99, 0.999)
-  message("nGene low percentiles:")
-  s_obj@meta.data$nGene %>% quantile(low_quantiles) %>% round(digits = 1) %>% print()
-  message(" ")
-  message("nGene high percentiles:")
-  s_obj@meta.data$nGene %>% quantile(high_quantiles) %>% round(digits = 1) %>% print()
-  message(" ")
-  message("percent.mito high percentiles:")
-  s_obj@meta.data$percent.mito %>% quantile(high_quantiles) %>% round(digits = 1) %>% print()
-  message(" ")
-
-  return(s_obj)
-
-}
-
 # create a single Seurat object from multiple 10x Cell Ranger outputs
-# takes a vector of sample_names and sample_dirs (can be just one)
+# takes vector of one or more sample_names and sample_dirs
+# can work with multiple samples, but the appropriate way is to use "combine" with objects that are pre-filtered
 load_sample_counts_matrix = function(sample_names, sample_dirs) {
 
   message("\n\n ========== import cell ranger counts matrix ========== \n\n")
@@ -170,16 +69,16 @@ load_sample_counts_matrix = function(sample_names, sample_dirs) {
     message("loading counts matrix for sample: ", sample_name)
 
     # check if sample dir is valid
-    if (!dir.exists(sample_dir)) stop("dir ", sample_dir, " does not exist")
+    if (!dir.exists(sample_dir)) stop(glue("dir {sample_dir} does not exist"))
 
     # determine counts matrix directory
     # "filtered_gene_bc_matrices" for single library
     # "filtered_gene_bc_matrices_mex" for aggregated
-    data_dir = paste0(sample_dir, "/outs")
+    data_dir = glue("{sample_dir}/outs")
     data_dir = list.files(path = data_dir, pattern = "matrix.mtx", full.names = TRUE, recursive = TRUE)
     data_dir = grep("filtered_gene_bc_matrices", data_dir, value = TRUE)[1]
     data_dir = dirname(data_dir)
-    if (!dir.exists(data_dir)) stop("dir ", data_dir, " does not exist")
+    if (!dir.exists(data_dir)) stop(glue("dir {sample_dir} does not exist"))
 
     message("loading counts matrix dir: ", data_dir)
 
@@ -243,6 +142,111 @@ load_sample_counts_matrix = function(sample_names, sample_dirs) {
 
 }
 
+# convert a sparse matrix of counts to a Seurat object and generate some QC plots
+create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL) {
+
+  message("\n\n ========== save raw counts matrix ========== \n\n")
+
+  # remove genes with very few counts
+  counts_matrix = counts_matrix[Matrix::rowSums(counts_matrix) >= 5, ]
+
+  message("input genes: ", nrow(counts_matrix))
+  message("input cells: ", ncol(counts_matrix))
+  message(" ")
+
+  # log to file
+  write(glue("input genes: {nrow(counts_matrix)}"), file = "create.log", append = TRUE)
+  write(glue("input cells: {ncol(counts_matrix)}"), file = "create.log", append = TRUE)
+
+  # save counts matrix as a standard text file and gzip
+  counts_matrix_filename = "counts.raw.txt"
+  write.table(as.matrix(counts_matrix), file = counts_matrix_filename, quote = FALSE, sep = "\t", col.names = NA)
+  system(paste0("gzip ", counts_matrix_filename))
+
+  # save counts matrix as a csv file (to be consistent with the rest of the tables)
+  raw_data = counts_matrix %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
+  write_csv(raw_data, path = "counts.raw.csv.gz")
+
+  message("\n\n ========== create seurat object ========== \n\n")
+
+  if (is.null(proj_name)) {
+
+    # if name is not set, then it's a manually merged counts matrix
+    # save.raw parameter causes errors in v2
+    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 10, min.genes = 300, project = "proj",
+                               names.field = 1, names.delim = ":")
+
+  } else if (proj_name == "aggregated") {
+
+    # multiple libraries combined using Cell Ranger (cellranger aggr)
+
+    # setup taking into consideration aggregated names delimiter
+    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 10, min.genes = 300, project = proj_name,
+                               names.field = 2, names.delim = "-")
+
+    # import cellranger aggr sample sheet
+    sample_sheet_csv = paste0(sample_dir, "/outs/aggregation_csv.csv")
+    sample_sheet = read.csv(sample_sheet_csv, stringsAsFactors = FALSE)
+    message("samples: ", paste(sample_sheet[, 1], collapse=", "))
+
+    # change s_obj@meta.data$orig.ident sample identities from numbers to names
+    s_obj@meta.data$orig.ident = factor(sample_sheet[s_obj@meta.data$orig.ident, 1])
+    # set s_obj@ident to the new s_obj@meta.data$orig.ident
+    s_obj = SetAllIdent(s_obj, id = "orig.ident")
+
+  } else {
+
+    stop("project name set to unknown value")
+
+  }
+
+  message(glue("imported genes: {nrow(s_obj@data)}"))
+  message(glue("imported cells: {ncol(s_obj@data)}"))
+  message(" ")
+
+  # log to file
+  write(glue("imported genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
+  write(glue("imported cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
+
+  # nGene and nUMI are automatically calculated for every object by Seurat
+  # calculate the percentage of mitochondrial genes here and store it in percent.mito using the AddMetaData
+  mt_genes = grep("^MT-", rownames(s_obj@data), ignore.case = TRUE, value = TRUE)
+  percent_mt = Matrix::colSums(s_obj@raw.data[mt_genes, ]) / Matrix::colSums(s_obj@raw.data)
+  percent_mt = round(percent_mt * 100, digits = 3)
+
+  # add columns to object@meta.data, and is a great place to stash QC stats
+  s_obj = AddMetaData(s_obj, metadata = percent_mt, col.name = "percent.mito")
+
+  message("\n\n ========== nGene/nUMI/percent_mito plots ========== \n\n")
+
+  dist_unfilt_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
+                             point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
+  ggsave("qc.distribution.unfiltered.png", plot = dist_unfilt_plot, width = 10, height = 5, units = "in")
+
+  # check for high mitochondrial percentage or low UMI content
+  png("qc.correlations.unfiltered.png", res = 200, width = 10, height = 5, units = "in")
+    par(mfrow = c(1, 2))
+    GenePlot(s_obj, gene1 = "nUMI", gene2 = "percent.mito", cex.use = 0.5, col.use = colors_samples)
+    GenePlot(s_obj, gene1 = "nUMI", gene2 = "nGene", cex.use = 0.5, col.use = colors_samples)
+  dev.off()
+
+  # check distribution of gene counts and mitochondrial percentage
+  low_quantiles = c(0.05, 0.02, 0.01, 0.001)
+  high_quantiles = c(0.95, 0.98, 0.99, 0.999)
+  message("nGene low percentiles:")
+  s_obj@meta.data$nGene %>% quantile(low_quantiles) %>% round(digits = 1) %>% print()
+  message(" ")
+  message("nGene high percentiles:")
+  s_obj@meta.data$nGene %>% quantile(high_quantiles) %>% round(digits = 1) %>% print()
+  message(" ")
+  message("percent.mito high percentiles:")
+  s_obj@meta.data$percent.mito %>% quantile(high_quantiles) %>% round(digits = 1) %>% print()
+  message(" ")
+
+  return(s_obj)
+
+}
+
 # filter data by number of genes and mitochondrial percentage
 filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 10) {
 
@@ -283,8 +287,8 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   message("filtered cells: ", ncol(s_obj@data))
 
   dist_filt_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
-                           point.size.use = 0.2, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
-  cowplot::ggsave("qc.distribution.filtered.png", plot = dist_filt_plot, width = 10, height = 5, units = "in")
+                           point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
+  ggsave("qc.distribution.filtered.png", plot = dist_filt_plot, width = 10, height = 5, units = "in")
 
   # after removing unwanted cells from the dataset, normalize the data
   # LogNormalize:
@@ -293,10 +297,10 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   # - log-transforms the result
   s_obj = NormalizeData(s_obj, normalization.method = "LogNormalize", scale.factor = 10000, display.progress = FALSE)
 
-  # save counts matrix as a standard text file and gzip
+  # save counts matrix as a basic gzipped text file
   # object@data stores normalized and log-transformed single cell expression
   # used for visualizations, such as violin and feature plots, most diff exp tests, finding high-variance genes
-  counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
+  counts_norm = s_obj@data %>% as.matrix() %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene")
   write_csv(counts_norm, path = "counts.normalized.csv.gz")
 
   # log to file
@@ -304,6 +308,70 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   write(glue("filtered cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
 
   return(s_obj)
+
+}
+
+# merge multiple Seurat objects
+combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
+
+  if (length(sample_analysis_dirs) < 2) stop("must have at least 2 samples to merge")
+
+  message("\n\n ========== combine samples ========== \n\n")
+
+  for (i in 1:length(sample_analysis_dirs)) {
+
+    sample_analysis_dir = sample_analysis_dirs[i]
+    sample_analysis_dir = glue("{original_wd}/{sample_analysis_dir}")
+    sample_seurat_rds = glue("{sample_analysis_dir}/seurat_obj.rds")
+
+    # check if analysis dir is valid
+    if (!dir.exists(sample_analysis_dir)) stop(glue("dir {sample_analysis_dir} does not exist"))
+    # check if seurat object exists
+    if (!file.exists(sample_seurat_rds)) stop(glue("seurat object rds {sample_seurat_rds} does not exist"))
+
+    # load seurat object
+    single_obj = readRDS(sample_seurat_rds)
+
+    # print single sample sample stats
+    sample_name = single_obj@meta.data[1, "orig.ident"]
+    message(glue("sample {sample_name} dir: {basename(sample_analysis_dir)}"))
+    write(glue("sample {sample_name} dir: {basename(sample_analysis_dir)}"), file = "create.log", append = TRUE)
+    message(glue("sample {sample_name} genes: {nrow(single_obj@data)}"))
+    write(glue("sample {sample_name} genes: {nrow(single_obj@data)}"), file = "create.log", append = TRUE)
+    message(glue("sample {sample_name} cells: {ncol(single_obj@data)}"))
+    write(glue("sample {sample_name} cells: {ncol(single_obj@data)}"), file = "create.log", append = TRUE)
+    message(" ")
+
+    # merge samples
+    if (i == 1) {
+      merged_obj = single_obj
+    } else {
+      merged_obj = MergeSeurat(object1 = merged_obj, object2 = single_obj,
+                               project = "proj", names.field = 1, names.delim = ":")
+    }
+
+  }
+
+  # print combined sample stats
+  message(glue("combined genes: {nrow(merged_obj@data)}"))
+  write(glue("combined genes: {nrow(merged_obj@data)}"), file = "create.log", append = TRUE)
+  message(glue("combined cells: {ncol(merged_obj@data)}"))
+  write(glue("combined cells: {ncol(merged_obj@data)}"), file = "create.log", append = TRUE)
+
+  # save raw counts matrix
+  counts_raw = merged_obj@raw.data %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
+  write_csv(counts_raw, path = "counts.raw.csv.gz")
+
+  # save counts matrix as a basic gzipped text file
+  # object@data stores normalized and log-transformed single cell expression
+  counts_norm = merged_obj@data %>% as.matrix() %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene")
+  write_csv(counts_norm, path = "counts.normalized.csv.gz")
+
+  dist_plot = VlnPlot(merged_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
+                      point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
+  ggsave("qc.distribution.png", plot = dist_plot, width = 10, height = 5, units = "in")
+
+  return(merged_obj)
 
 }
 
@@ -362,9 +430,9 @@ calculate_variance = function(seurat_obj) {
   # - PCAPlot
   # - PCHeatmap
 
-  # Graphs the output of a PCA analysis Cells are colored by their identity class
+  # plot the output of PCA analysis (shuffle cells so any one group does not appear overrepresented due to ordering)
   png("variance.pca.png", res = 200, width = 8, height = 6, units = "in")
-    PCAPlot(s_obj, 1, 2, pt.size = 1.5, cols.use = colors_samples)
+    PCAPlot(s_obj, 1, 2, pt.size = 1.5, cells.use = sample(colnames(s_obj@data)), cols.use = colors_samples)
   dev.off()
 
   message("\n\n ========== Seurat::PCHeatmap() ========== \n\n")
@@ -380,7 +448,7 @@ calculate_variance = function(seurat_obj) {
   # A more ad hoc method for determining which PCs to use
   # draw your cutoff where there is a clear elbow in the graph
   plot_elbow = PCElbowPlot(s_obj, num.pc = 30)
-  cowplot::ggsave("variance.pc.elbow.png", plot = plot_elbow, width = 8, height = 5, units = "in")
+  ggsave("variance.pc.elbow.png", plot = plot_elbow, width = 8, height = 5, units = "in")
 
   # resampling test inspired by the jackStraw procedure - very slow, so skip for large projects (>10,000 cells)
   if (ncol(s_obj@data) < 10000) {
@@ -393,7 +461,7 @@ calculate_variance = function(seurat_obj) {
     # compare the distribution of p-values for each PC with a uniform distribution (dashed line)
     # significant PCs will show a strong enrichment of genes with low p-values (solid curve above the dashed line)
     plot_jackstraw = JackStrawPlot(s_obj, PCs = 1:40, nCol = 8)
-    cowplot::ggsave("variance.pc.jackstraw.png", plot = plot_jackstraw, width = 12, height = 8, units = "in")
+    ggsave("variance.pc.jackstraw.png", plot = plot_jackstraw, width = 12, height = 8, units = "in")
 
   }
 
@@ -402,15 +470,18 @@ calculate_variance = function(seurat_obj) {
 }
 
 # perform graph-based clustering and tSNE
-calculate_clusters = function(seurat_obj, num_pcs) {
+calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
 
-  # check if number of PCs seems reasonable
-  if (num_pcs < 5) stop("too few PCs: ", num_pcs)
-  if (num_pcs > 50) stop("too many PCs: ", num_pcs)
+  # check if number of dimensions seems reasonable
+  if (num_dim < 5) stop("too few dims: ", num_dim)
+  if (num_dim > 50) stop("too many dims: ", num_dim)
 
   s_obj = seurat_obj
 
   message("\n\n ========== Seurat::FindClusters() ========== \n\n")
+
+  message("reduction type: ", reduction_type)
+  message("num dims: ", num_dim)
 
   message("initial meta.data fields: ", paste(colnames(s_obj@meta.data), collapse = ", "))
   message("initial identities: ", paste(levels(s_obj@ident), collapse = ", "))
@@ -421,7 +492,8 @@ calculate_clusters = function(seurat_obj, num_pcs) {
   # increased resolution values lead to more clusters (0.6-1.2 for 3K cells, 2-4 for 33K cells)
   # try multiple resolutions here (will be saved as s_obj@data.info columns)
   # algorithm: 1 = original Louvain; 2 = Louvain with multilevel refinement; 3 = SLM
-  s_obj = FindClusters(s_obj, reduction.type = "pca", dims.use = 1:num_pcs,
+  # FindClusters() uses "reduction.type" and RunTSNE() uses "reduction.use", so that may change in the future
+  s_obj = FindClusters(s_obj, reduction.type = reduction_type, dims.use = 1:num_dim,
                        algorithm = 3, resolution = seq(0.1, 2.1, 0.2),
                        save.SNN = TRUE, force.recalc = TRUE, print.output = FALSE)
 
@@ -434,18 +506,21 @@ calculate_clusters = function(seurat_obj, num_pcs) {
 
   # use tSNE as a tool to visualize, not for clustering directly on tSNE components
   # cells within the graph-based clusters determined above should co-localize on the tSNE plot
-  s_obj = RunTSNE(s_obj, dims.use = 1:num_pcs, do.fast = TRUE)
+  s_obj = RunTSNE(s_obj, reduction.use = reduction_type, dims.use = 1:num_dim, do.fast = TRUE)
 
   # reduce point size for larger datasets
   tsne_pt_size = 1
   if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.8
-  if (ncol(s_obj@data) > 15000) tsne_pt_size = 0.6
+  if (ncol(s_obj@data) > 25000) tsne_pt_size = 0.6
 
-  # plot tSNE based on original sample names
+  # tSNE using original sample names (shuffle cells so any one group does not appear overrepresented due to ordering)
   s_obj = SetAllIdent(s_obj, id = "orig.ident")
-  plot_tsne = TSNEPlot(s_obj, do.return = TRUE, pt.size = tsne_pt_size, colors.use = colors_samples)
-  cowplot::ggsave(glue("tsne.pcs{num_pcs}.original.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
-  cowplot::ggsave(glue("tsne.pcs{num_pcs}.original.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
+  plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = tsne_pt_size,
+                       colors.use = colors_samples, do.return = TRUE)
+  ggsave(glue("tsne.{reduction_type}.{num_dim}.original.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
+  Sys.sleep(1)
+  ggsave(glue("tsne.{reduction_type}.{num_dim}.original.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
+  Sys.sleep(1)
 
   # rename and plot clusters for calculated resolutions
   res_cols = grep("^res.", colnames(s_obj@meta.data), value = TRUE)
@@ -467,7 +542,7 @@ calculate_clusters = function(seurat_obj, num_pcs) {
     # plot file name
     res_str = gsub("\\.", "", res)
     num_clusters = s_obj@meta.data %>% pull(res) %>% unique() %>% length()
-    filename = glue("tsne.pcs{num_pcs}.{res_str}.clust{num_clusters}")
+    filename = glue("tsne.{reduction_type}.{num_dim}.{res_str}.clust{num_clusters}")
 
     s_obj = plot_clusters(seurat_obj = s_obj, resolution = res_val, plot_filename = filename)
 
@@ -498,10 +573,12 @@ plot_clusters = function(seurat_obj, resolution, plot_filename) {
 
     # reduce point size for larger datasets
     tsne_pt_size = 1
-    if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.6
-    if (ncol(s_obj@data) > 15000) tsne_pt_size = 0.4
+    if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.8
+    if (ncol(s_obj@data) > 25000) tsne_pt_size = 0.6
 
-    plot_tsne = TSNEPlot(s_obj, do.return = TRUE, pt.size = tsne_pt_size, colors.use = colors_clusters)
+    # shuffle cells so they appear randomly and one group does not show up on top
+    plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = tsne_pt_size,
+                         colors.use = colors_clusters, do.return = TRUE)
     plot_filename_png = glue("{plot_filename}.png")
     message("save tSNE plot: ", plot_filename_png)
     ggsave(plot_filename_png, plot = plot_tsne, width = 7, height = 6, units = "in")
@@ -621,7 +698,6 @@ calculate_cluster_stats = function(seurat_obj, label) {
   # gene expression for an "average" cell in each identity class (averaging and output are in non-log space)
   # add add.ident if you want to observe cluster averages separated by replicate
   cluster_avg_exp = AverageExpression(seurat_obj, show.progress = FALSE)
-  # colnames(cluster_avg_exp) = paste0("clust_", colnames(cluster_avg_exp))
   cluster_avg_exp = cluster_avg_exp %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
   cluster_avg_exp_filename = glue("{exp_dir}/exp.{label}.mean.csv")
   write_excel_csv(cluster_avg_exp, path = cluster_avg_exp_filename)
@@ -798,6 +874,183 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
 
 }
 
+# perform CCA for Seurat "alignment"
+# takes original working dir (before moving to analysis dir) and a vector of batch names and batch dirs
+# need to run "create" first so that input objects can be manually modified after creation and before alignment
+calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
+
+  if (length(batch_analysis_dirs) < 3) stop("script supports minimum 3 batches for CCA")
+
+  message("\n\n ========== load batch seurat objects ========== \n\n")
+
+  seurat_obj_list = list()
+  var_genes = character()
+  for (i in 1:length(batch_analysis_dirs)) {
+
+    batch_name = batch_names[i]
+    batch_analysis_dir = batch_analysis_dirs[i]
+    batch_analysis_dir = glue("{original_wd}/{batch_analysis_dir}")
+    batch_seurat_rds = glue("{batch_analysis_dir}/seurat_obj.rds")
+
+    message("loading analysis for batch: ", batch_name)
+
+    # check if analysis dir is valid
+    if (!dir.exists(batch_analysis_dir)) stop(glue("dir {batch_analysis_dir} does not exist"))
+    # check if seurat object exists
+    if (!file.exists(batch_seurat_rds)) stop(glue("seurat object rds {batch_seurat_rds} does not exist"))
+
+    s_obj = readRDS(batch_seurat_rds)
+
+    # save orig.ident in meta.data (RunMultiCCA sets orig.ident to cell name)
+    s_obj@meta.data$batch.orig.ident = s_obj@meta.data$orig.ident
+
+    # save batch name in meta.data
+    s_obj@meta.data$batch = batch_name
+    seurat_obj_list[[batch_name]] = s_obj
+
+    write(glue("batch name: {batch_name}"), file = "create.log", append = TRUE)
+    write(glue("batch dir: {basename(batch_analysis_dir)}"), file = "create.log", append = TRUE)
+    write(glue("batch cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
+
+    # top 2,000 genes with the highest dispersion (var/mean) from both datasets
+    # "rownames in hvg.info are sorted by the variance/mean ratio, which usually works quite well for UMI data"
+    # "we chose to take the top 2k genes as it was easy for each dataset to contribute the same number of genes"
+    # https://github.com/satijalab/seurat/issues/227
+    batch_var_genes = s_obj@hvg.info %>% head(2000) %>% rownames()
+    var_genes = append(var_genes, batch_var_genes)
+
+  }
+
+  # check how well the variable genes overlap between datasets
+  message(glue("variable genes (1+ batches): {length(which(table(var_genes) > 0))}"))
+  write(glue("variable genes (1+ batches): {length(which(table(var_genes) > 0))}"), file = "create.log", append = TRUE)
+  message(glue("variable genes (2+ batches): {length(which(table(var_genes) > 1))}"))
+  write(glue("variable genes (2+ batches): {length(which(table(var_genes) > 1))}"), file = "create.log", append = TRUE)
+  message(glue("variable genes (3+ batches): {length(which(table(var_genes) > 2))}"))
+  write(glue("variable genes (3+ batches): {length(which(table(var_genes) > 2))}"), file = "create.log", append = TRUE)
+
+  # genes to use for CCA, highly variable in more than one datasets and appears in all datasets
+  var_genes = names(which(table(var_genes) > 1))
+  for (i in 1:length(seurat_obj_list)) {
+    var_genes = var_genes[var_genes %in% rownames(seurat_obj_list[[i]]@scale.data)]
+  }
+  message(glue("variable genes for CCA: {length(var_genes)}"))
+  write(glue("variable genes for CCA: {length(var_genes)}"), file = "create.log", append = TRUE)
+
+  message("seurat objects: ", length(seurat_obj_list))
+
+  message("\n\n ========== Seurat::RunMultiCCA() ========== \n\n")
+
+  # run multi-set CCA (must give at least 3 objects/matrices)
+  s_obj = RunMultiCCA(seurat_obj_list, genes.use = var_genes, num.ccs = 40)
+
+  write(glue("combined cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
+
+  # restore orig.ident in meta.data (RunMultiCCA sets orig.ident to cell name)
+  s_obj@meta.data$orig.ident = s_obj@meta.data$batch.orig.ident
+  s_obj = SetAllIdent(s_obj, id = "orig.ident")
+
+  # get rid of old clusters
+  s_obj@meta.data = s_obj@meta.data %>% select(-starts_with("res"))
+
+  # save raw counts matrix
+  counts_raw = s_obj@raw.data %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
+  write_csv(counts_raw, path = "counts.raw.csv.gz")
+
+  message("\n\n ========== Seurat::MetageneBicorPlot() ========== \n\n")
+
+  # MetageneBicorPlot plots correlation strength for each CC and should saturates after a reasonable number of CCs
+  bicor_plot = MetageneBicorPlot(s_obj, grouping.var = "batch", dims.eval = 1:40)
+  ggsave("variance.cca.bicor.png", plot = bicor_plot, width = 8, height = 5, units = "in")
+
+  # explore the CC dimensions as heatmap
+  png("variance.cca.heatmap.png", res = 200, width = 8, height = 16, units = "in")
+    DimHeatmap(object = s_obj, reduction.type = "cca", cells.use = 500, dim.use = 1:30, do.balanced = TRUE)
+  dev.off()
+
+  # plot pre-alignment CCA-based tSNE
+  dim_ident = DimPlot(object = s_obj, cells.use = sample(colnames(s_obj@data)), reduction.use = "cca",
+                      group.by = "batch", pt.size = 0.8, cols.use = colors_samples, do.return = TRUE)
+  ggsave("variance.cca.tsne.ident.png", plot = dim_ident, width = 7, height = 6, units = "in")
+
+  return(s_obj)
+
+}
+
+# align the CCA subspaces, which creates a new dimensional reduction "cca.aligned"
+align_cca = function(seurat_obj, num_ccs) {
+
+  # check if number of CCs seems reasonable
+  if (num_ccs < 5) stop("too few CCs: ", num_ccs)
+  if (num_ccs > 50) stop("too many CCs: ", num_ccs)
+
+  s_obj = seurat_obj
+
+  message("\n\n ========== Seurat::CalcVarExpRatio() ========== \n\n")
+
+  # search for cells whose expression profile cannot be well-explained by CCA compared to PCA
+  # CalcVarExpRatio: calculate the ratio of variance explained by ICA or PCA to CCA
+  s_obj = CalcVarExpRatio(object = s_obj, reduction.type = "pca", grouping.var = "batch", dims.use = 1:num_ccs)
+
+  # discard cells where the variance explained by CCA is <2-fold (ratio < 0.5) compared to PCA
+  s_obj_unfiltered = s_obj
+  s_obj = SubsetData(object = s_obj_unfiltered, subset.name = "var.ratio.pca", accept.low = 0.5)
+  s_obj_discarded = SubsetData(object = s_obj_unfiltered, subset.name = "var.ratio.pca", accept.high = 0.5)
+
+  message(glue("unfiltered cells: {nrow(s_obj_unfiltered@meta.data)}"))
+
+  message(glue("discarded cells: {nrow(s_obj_discarded@meta.data)}"))
+  write(glue("discarded cells: {nrow(s_obj_discarded@meta.data)}"), file = "create.log", append = TRUE)
+  message(glue("discarded median genes: {median(s_obj_discarded@meta.data$nGene)}"))
+  write(glue("discarded median genes: {median(s_obj_discarded@meta.data$nGene)}"), file = "create.log", append = TRUE)
+
+  message(glue("passing cells: {nrow(s_obj@meta.data)}"))
+  write(glue("passing cells: {nrow(s_obj@meta.data)}"), file = "create.log", append = TRUE)
+  message(glue("passing median genes: {median(s_obj@meta.data$nGene)}"))
+  write(glue("passing median genes: {median(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
+
+  message("\n\n ========== Seurat::AlignSubspace() ========== \n\n")
+
+  # align the CCA subspaces, which returns a new dimensional reduction called cca.aligned (slow part)
+  s_obj = AlignSubspace(object = s_obj, reduction.type = "cca", grouping.var = "batch", dims.align = 1:num_ccs)
+  s_obj = SetAllIdent(s_obj, id = "orig.ident")
+
+  # check dimensional reductions
+  # str(s_cca@dr)
+
+  # save normalized and log-transformed counts matrix as a basic gzipped text file
+  counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
+  write_csv(counts_norm, path = "counts.normalized.csv.gz")
+
+  message("\n\n ========== Seurat::RunPCA() ========== \n\n")
+
+  # compute PCA to compare with CCA alignment
+  s_obj = RunPCA(object = s_obj, pc.genes = s_obj@var.genes, pcs.compute = 50,
+                 do.print = FALSE, pcs.print = 3, genes.print = 5)
+
+  # tSNE based on PCA (shuffle cells so any one group does not appear overrepresented due to ordering)
+  num_pcs = 30
+  s_obj = RunTSNE(object = s_obj, reduction.use = "pca", dims.use = 1:num_pcs, do.fast = TRUE)
+  plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
+                           pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
+  ggsave(glue("tsne.pca.{num_pcs}.batch.png"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+  Sys.sleep(1)
+  ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+  Sys.sleep(1)
+
+  # tSNE based on cca.aligned (shuffle cells so any one group does not appear overrepresented due to ordering)
+  s_obj = RunTSNE(object = s_obj, reduction.use = "cca.aligned", dims.use = 1:num_ccs, do.fast = TRUE)
+  plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
+                           pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
+  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.png"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+  Sys.sleep(1)
+  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.pdf"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+  Sys.sleep(1)
+
+  return(s_obj)
+
+}
+
 
 # ========== main ==========
 
@@ -820,7 +1073,6 @@ opts = docopt(doc)
 load_libraries()
 
 # global settings
-# color_scheme = c(brewer.pal(9, "Set1"), brewer.pal(8, "Accent"), brewer.pal(8, "Dark2"))
 colors_samples = c(brewer.pal(9, "Set1"), brewer.pal(8, "Accent"), brewer.pal(8, "Dark2"))
 colors_clusters = c(tableau_color_pal("tableau10")(10), stata_pal("s2color")(15))
 
@@ -829,9 +1081,11 @@ analysis_step = "unknown"
 out_dir = opts$analysis_dir
 
 # create analysis directory if starting new analysis or exit if analysis already exists
-if (opts$create) {
+if (opts$create || opts$combine || opts$cca) {
 
-  analysis_step = "create"
+  if (opts$create) analysis_step = "create"
+  if (opts$combine) analysis_step = "combine"
+  if (opts$cca) analysis_step = "cca"
   message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
 
   if (dir.exists(out_dir)) {
@@ -839,6 +1093,9 @@ if (opts$create) {
   } else {
     dir.create(out_dir)
   }
+
+  # original working dir (before moving to analysis dir)
+  original_wd = getwd()
 
 }
 
@@ -852,6 +1109,7 @@ if (opts$create) {
   write(glue("analysis: {out_dir}"), file = "create.log", append = TRUE)
 
   # create new seurat object based on input sample names and sample directories
+  # can work with multiple samples, but the appropriate way is to use "combine" with objects that are pre-filtered
   seurat_obj = load_sample_counts_matrix(opts$sample_name, opts$sample_dir)
 
   # save right after loading data in case analysis needs to be customized and later steps are disrupted
@@ -865,9 +1123,26 @@ if (opts$create) {
 
   saveRDS(seurat_obj, file = "seurat_obj.rds")
 
+} else if (opts$combine) {
+
+  # merge multiple samples/libraries based on previous analysis directories
+  seurat_obj = combine_seurat_obj(original_wd = original_wd, sample_analysis_dirs = opts$sample_analysis_dir)
+
+  # calculate various variance metrics
+  seurat_obj = calculate_variance(seurat_obj)
+
+  saveRDS(seurat_obj, file = "seurat_obj.rds")
+
+} else if (opts$cca) {
+
+  # run CCA based on input batch names and previous analysis directories
+  # manually specifying batch names allows multiple samples/libraries per batch
+  seurat_obj = calculate_cca(original_wd, opts$batch_name, opts$batch_analysis_dir)
+  saveRDS(seurat_obj, file = "seurat_obj.rds")
+
 } else {
 
-  # all commands besides "create" start with an existing seurat object
+  # all commands besides "create" and "cca" start with an existing seurat object
   if (file.exists("seurat_obj.rds")) {
 
     message("loading seurat_obj")
@@ -884,15 +1159,15 @@ if (opts$create) {
     analysis_step = "cluster"
     message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
 
-    # calculate clusters
-    seurat_obj = calculate_clusters(seurat_obj, num_pcs = as.integer(opts$num_pcs))
+    # determine clusters
+    seurat_obj = calculate_clusters(seurat_obj, num_dim = as.integer(opts$num_pcs), reduction_type = "pca")
     saveRDS(seurat_obj, file = "seurat_obj.rds")
 
     # consider using BuildClusterTree() to merge clusters (see pbmc33k examples)
 
   }
 
-  if (opts$identify || opts$diff) {
+  if (opts$identify || opts$de) {
 
     # set resolution in the seurat object
     res_val = as.numeric(opts$resolution)
@@ -940,7 +1215,7 @@ if (opts$create) {
       }
 
       # differential expression
-      if (opts$diff) {
+      if (opts$de) {
 
           analysis_step = "diff"
           message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
@@ -950,6 +1225,21 @@ if (opts$create) {
       }
 
     }
+
+  }
+
+  if (opts$align) {
+
+    analysis_step = "align"
+    message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
+
+    # save pre-aligned seurat object file since alignment will remove some cells (where CCA and PCA disagree)
+    file.rename(from = "seurat_obj.rds", to = "seurat_obj.unfiltered.rds")
+
+    # perform alignment and determine clusters
+    seurat_obj = align_cca(seurat_obj, num_ccs = as.integer(opts$num_ccs))
+    seurat_obj = calculate_clusters(seurat_obj, num_dim = as.integer(opts$num_ccs), reduction_type = "cca.aligned")
+    saveRDS(seurat_obj, file = "seurat_obj.rds")
 
   }
 
