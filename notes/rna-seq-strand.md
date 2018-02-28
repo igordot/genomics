@@ -1,14 +1,15 @@
 # RNA-Seq Strand
 
-| | forward (transcript) | reverse (rev comp of transcript) |
-|:----------|:----------|:----------|
-| TopHat/Cufflinks `--library-type` | fr-secondstrand | fr-firststrand |
-| STAR | 1st read strand | 2nd read strand |
-| Picard CollectRnaSeqMetrics `STRAND_SPECIFICITY` | FIRST_READ_TRANSCRIPTION_STRAND | SECOND_READ_TRANSCRIPTION_STRAND |
-| htseq-count `-s/--stranded` |yes | reverse |
-| subread featureCounts `-s` | 1 | 2 |
-| RSEM `--forward-prob` | 1 | 0 |
-| Library Kit | Illumina ScriptSeq | Illumina TruSeq Stranded Total RNA |
+|                                      | forward (transcript)                 | reverse (rev comp of transcript)     |
+|:-------------------------------------|:-------------------------------------|:-------------------------------------|
+| TopHat/Cufflinks `--library-type`    | `fr-secondstrand`                    | `fr-firststrand`                     |
+| STAR                                 | 1st read strand                      | 2nd read strand                      |
+| Picard CollectRnaSeqMetrics `STRAND_SPECIFICITY` | `FIRST_READ_TRANSCRIPTION_STRAND` | `SECOND_READ_TRANSCRIPTION_STRAND` |
+| htseq-count `-s/--stranded`          | `yes`                                | `reverse`                            |
+| subread featureCounts `-s`           | `1`                                  | `2`                                  |
+| RSEM `--forward-prob`                | `1`                                  | `0`                                  |
+| Salmon/Sailfish `--libType`          | `SF`/`ISF`                           | `SR`/`ISR`                           |
+| Library Kit                          | Illumina ScriptSeq                   | Illumina TruSeq Stranded Total RNA   |
 
 ***
 

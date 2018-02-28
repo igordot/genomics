@@ -734,7 +734,7 @@ calculate_cluster_markers = function(seurat_obj, label, test) {
   if (!dir.exists(markers_dir)) dir.create(markers_dir)
 
   message("marker test: ", test)
-  all_markers = FindAllMarkers(seurat_obj, logfc.threshold = log(1.5), min.pct = 0.20, min.diff.pct = -Inf,
+  all_markers = FindAllMarkers(seurat_obj, logfc.threshold = log(1.2), min.pct = 0.20, min.diff.pct = -Inf,
                                test.use = test, only.pos = FALSE, print.bar = FALSE)
 
   # do some light filtering and clean up (different tests return slighly different output)
@@ -752,7 +752,7 @@ calculate_cluster_markers = function(seurat_obj, label, test) {
     # tobit: Tobit-test for differential gene expression as in Trapnell et al., Nature Biotech, 2014
     all_markers = all_markers %>%
       select(cluster, gene, avg_logFC, p_val, p_val_adj) %>%
-      filter(p_val_adj < 0.01 & abs(avg_logFC) > log(1.5)) %>%
+      filter(p_val_adj < 0.001) %>%
       mutate(avg_logFC = round(avg_logFC, 3)) %>%
       arrange(cluster, p_val_adj, p_val)
     top_markers = all_markers %>% filter(avg_logFC > 0) %>% group_by(cluster) %>% top_n(20, avg_logFC)
