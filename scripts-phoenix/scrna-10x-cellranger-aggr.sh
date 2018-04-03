@@ -55,7 +55,7 @@ sed -i 's/"//g' "$sample_sheet"
 sed -i -e '$a\' "$sample_sheet"
 
 module unload gcc
-module load cellranger/2.0.0
+module load cellranger/2.1.0
 
 # display settings
 echo " * cellranger: $(which cellranger) "

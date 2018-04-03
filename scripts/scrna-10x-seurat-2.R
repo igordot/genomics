@@ -45,10 +45,11 @@ load_libraries = function() {
   suppressPackageStartupMessages(library(glue))
   suppressPackageStartupMessages(library(Seurat))
   suppressPackageStartupMessages(library(Matrix))
-  suppressPackageStartupMessages(library(RColorBrewer))
   suppressPackageStartupMessages(library(tidyverse))
   suppressPackageStartupMessages(library(cowplot))
-  suppressPackageStartupMessages(library(ggthemes))
+  suppressPackageStartupMessages(library(RColorBrewer))
+  suppressPackageStartupMessages(library(ggsci))
+  suppressPackageStartupMessages(library(eulerr))
 
 }
 
@@ -164,7 +165,7 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
   system(paste0("gzip ", counts_matrix_filename))
 
   # save counts matrix as a csv file (to be consistent with the rest of the tables)
-  raw_data = counts_matrix %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
+  raw_data = counts_matrix %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(raw_data, path = "counts.raw.csv.gz")
 
   message("\n\n ========== create seurat object ========== \n\n")
@@ -300,7 +301,8 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   # save counts matrix as a basic gzipped text file
   # object@data stores normalized and log-transformed single cell expression
   # used for visualizations, such as violin and feature plots, most diff exp tests, finding high-variance genes
-  counts_norm = s_obj@data %>% as.matrix() %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene")
+  counts_norm = s_obj@data %>% as.matrix() %>% round(3)
+  counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(counts_norm, path = "counts.normalized.csv.gz")
 
   # log to file
@@ -359,12 +361,13 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
   write(glue("combined cells: {ncol(merged_obj@data)}"), file = "create.log", append = TRUE)
 
   # save raw counts matrix
-  counts_raw = merged_obj@raw.data %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
+  counts_raw = merged_obj@raw.data %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(counts_raw, path = "counts.raw.csv.gz")
 
   # save counts matrix as a basic gzipped text file
   # object@data stores normalized and log-transformed single cell expression
-  counts_norm = merged_obj@data %>% as.matrix() %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene")
+  counts_norm = merged_obj@data %>% as.matrix() %>% round(3)
+  counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(counts_norm, path = "counts.normalized.csv.gz")
 
   dist_plot = VlnPlot(merged_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
@@ -445,9 +448,8 @@ calculate_variance = function(seurat_obj) {
 
   message("\n\n ========== Seurat::PCElbowPlot() ========== \n\n")
 
-  # A more ad hoc method for determining which PCs to use
-  # draw your cutoff where there is a clear elbow in the graph
-  plot_elbow = PCElbowPlot(s_obj, num.pc = 30)
+  # a more ad hoc method for determining PCs to use, draw cutoff where there is a clear elbow in the graph
+  plot_elbow = PCElbowPlot(s_obj, num.pc = 40)
   ggsave("variance.pc.elbow.png", plot = plot_elbow, width = 8, height = 5, units = "in")
 
   # resampling test inspired by the jackStraw procedure - very slow, so skip for large projects (>10,000 cells)
@@ -484,21 +486,23 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
   message("num dims: ", num_dim)
 
   message("initial meta.data fields: ", paste(colnames(s_obj@meta.data), collapse = ", "))
-  message("initial identities: ", paste(levels(s_obj@ident), collapse = ", "))
 
   # graph-based clustering approach
   # clusters are saved in the object@ident slot
   # save the SNN so that the algorithm can be rerun using the same graph, but with different resolutions
   # increased resolution values lead to more clusters (0.6-1.2 for 3K cells, 2-4 for 33K cells)
   # try multiple resolutions here (will be saved as s_obj@data.info columns)
+  res_range = seq(0.1, 1.1, 0.1)
+  if (ncol(s_obj@data) > 10000) res_range = seq(0.1, 1.5, 0.1)
+  if (ncol(s_obj@data) > 30000) res_range = seq(0.1, 2.5, 0.1)
+
   # algorithm: 1 = original Louvain; 2 = Louvain with multilevel refinement; 3 = SLM
   # FindClusters() uses "reduction.type" and RunTSNE() uses "reduction.use", so that may change in the future
   s_obj = FindClusters(s_obj, reduction.type = reduction_type, dims.use = 1:num_dim,
-                       algorithm = 3, resolution = seq(0.1, 2.1, 0.2),
+                       algorithm = 3, resolution = res_range,
                        save.SNN = TRUE, force.recalc = TRUE, print.output = FALSE)
 
   message("new meta.data fields: ", paste(colnames(s_obj@meta.data), collapse = ", "))
-  message("new identities: ", paste(levels(s_obj@ident), collapse = ", "))
 
   # PrintFindClustersParams to print a nicely formatted formatted summary of the parameters that were chosen
 
@@ -524,32 +528,50 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
 
   # rename and plot clusters for calculated resolutions
   res_cols = grep("^res.", colnames(s_obj@meta.data), value = TRUE)
+  res_cols = sort(res_cols)
+  res_num_clusters_prev = 0
   for (res in res_cols) {
 
-    # check if the resolution still has original labels (characters starting with 0)
-    if (min(s_obj@meta.data[, res]) == "0") {
-      # relabel identities so they start with 1 and not 0
-      s_obj@meta.data[, res] = as.numeric(s_obj@meta.data[, res]) + 1
-      # pad with 0s to avoid sorting issues
-      s_obj@meta.data[, res] = str_pad(s_obj@meta.data[, res], width = 2, side = "left", pad = "0")
-      # pad with "C" to avoid downstream numeric conversions
-      s_obj@meta.data[, res] = str_c("C", s_obj@meta.data[, res])
+    # proceed if current resolution has more clusters than previous
+    res_num_clusters_cur = s_obj@meta.data[, res] %>% unique() %>% length()
+    if (res_num_clusters_cur > res_num_clusters_prev) {
+
+      # check if the resolution still has original labels (characters starting with 0)
+      if (min(s_obj@meta.data[, res]) == "0") {
+        # relabel identities so they start with 1 and not 0
+        s_obj@meta.data[, res] = as.numeric(s_obj@meta.data[, res]) + 1
+        # pad with 0s to avoid sorting issues
+        s_obj@meta.data[, res] = str_pad(s_obj@meta.data[, res], width = 2, side = "left", pad = "0")
+        # pad with "C" to avoid downstream numeric conversions
+        s_obj@meta.data[, res] = str_c("C", s_obj@meta.data[, res])
+      }
+
+      # resolution value based on resolution column name
+      res_val = sub("res\\.", "", res)
+
+      # plot file name
+      res_str = gsub("\\.", "", res)
+      num_clusters = s_obj@meta.data %>% pull(res) %>% unique() %>% length()
+      filename = glue("tsne.{reduction_type}.{num_dim}.{res_str}.clust{num_clusters}")
+
+      s_obj = plot_clusters(seurat_obj = s_obj, resolution = res_val, plot_filename = filename)
+
+      # add blank line to make output easier to read
+      message(" ")
+
+    } else {
+
+      # remove resolution if the number of clusters is same as previous
+      s_obj@meta.data = s_obj@meta.data %>% select(-one_of(res))
+
     }
 
-    # resolution value based on resolution column name
-    res_val = sub("res\\.", "", res)
-
-    # plot file name
-    res_str = gsub("\\.", "", res)
-    num_clusters = s_obj@meta.data %>% pull(res) %>% unique() %>% length()
-    filename = glue("tsne.{reduction_type}.{num_dim}.{res_str}.clust{num_clusters}")
-
-    s_obj = plot_clusters(seurat_obj = s_obj, resolution = res_val, plot_filename = filename)
-
-    # perform clustering and add blank line to make output easier to read
-    message(" ")
+    # update resolution cluster count for next iteration
+    res_num_clusters_prev = res_num_clusters_cur
 
   }
+
+  message("updated meta.data fields: ", paste(colnames(s_obj@meta.data), collapse = ", "))
 
   return(s_obj)
 
@@ -569,7 +591,7 @@ plot_clusters = function(seurat_obj, resolution, plot_filename) {
   message("clusters: ", num_clusters)
 
   # generate plot if there is a reasonable number of clusters
-  if (num_clusters > 2 && num_clusters < 20) {
+  if (num_clusters > 2 && num_clusters < 30) {
 
     # reduce point size for larger datasets
     tsne_pt_size = 1
@@ -698,7 +720,7 @@ calculate_cluster_stats = function(seurat_obj, label) {
   # gene expression for an "average" cell in each identity class (averaging and output are in non-log space)
   # add add.ident if you want to observe cluster averages separated by replicate
   cluster_avg_exp = AverageExpression(seurat_obj, show.progress = FALSE)
-  cluster_avg_exp = cluster_avg_exp %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
+  cluster_avg_exp = cluster_avg_exp %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   cluster_avg_exp_filename = glue("{exp_dir}/exp.{label}.mean.csv")
   write_excel_csv(cluster_avg_exp, path = cluster_avg_exp_filename)
 
@@ -712,8 +734,9 @@ calculate_cluster_stats = function(seurat_obj, label) {
     seurat_subset = SubsetData(seurat_obj, ident.use = clust_name)
 
     # create matrix and remove genes with no counts
-    cluster_exp = seurat_subset@data %>% as.matrix() %>% round(digits = 3)
-    cluster_exp = cluster_exp[rowSums(cluster_exp) > 0, ] %>% as.data.frame() %>% rownames_to_column("gene")
+    cluster_exp = seurat_subset@data %>% as.matrix() %>% round(3)
+    cluster_exp = cluster_exp[rowSums(cluster_exp) > 0, ]
+    cluster_exp = cluster_exp %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
 
     message("cluster genes: ", nrow(cluster_exp))
     message("cluster cells: ", ncol(cluster_exp) - 1)
@@ -879,12 +902,13 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
 # need to run "create" first so that input objects can be manually modified after creation and before alignment
 calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
 
-  if (length(batch_analysis_dirs) < 3) stop("script supports minimum 3 batches for CCA")
+  num_batches = length(unique(batch_names))
+  if (num_batches < 2) stop("minimum 2 batches needed for CCA")
 
   message("\n\n ========== load batch seurat objects ========== \n\n")
 
   seurat_obj_list = list()
-  var_genes = character()
+  var_genes_list = list()
   for (i in 1:length(batch_analysis_dirs)) {
 
     batch_name = batch_names[i]
@@ -909,17 +933,30 @@ calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
     seurat_obj_list[[batch_name]] = s_obj
 
     write(glue("batch name: {batch_name}"), file = "create.log", append = TRUE)
-    write(glue("batch dir: {basename(batch_analysis_dir)}"), file = "create.log", append = TRUE)
-    write(glue("batch cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
+    write(glue("sample dir: {basename(batch_analysis_dir)}"), file = "create.log", append = TRUE)
+    write(glue("sample cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
 
     # top 2,000 genes with the highest dispersion (var/mean) from both datasets
     # "rownames in hvg.info are sorted by the variance/mean ratio, which usually works quite well for UMI data"
     # "we chose to take the top 2k genes as it was easy for each dataset to contribute the same number of genes"
     # https://github.com/satijalab/seurat/issues/227
     batch_var_genes = s_obj@hvg.info %>% head(2000) %>% rownames()
-    var_genes = append(var_genes, batch_var_genes)
+    var_genes_list[[batch_name]] = batch_var_genes
 
   }
+
+  # venn plot of variable gene overlaps
+  colors_euler = colors_samples[1:length(var_genes_list)]
+  euler_fit = euler(var_genes_list, shape = "ellipse")
+  euler_plot = plot(euler_fit,
+                    fills = list(fill = colors_euler, alpha = 0.7),
+                    edges = list(col = colors_euler))
+  png("variance.vargenes.png", res = 200, width = 5, height = 5, units = "in")
+    print(euler_plot)
+  dev.off()
+
+  # convert list of variable genes per batch into a single vector
+  var_genes = var_genes_list %>% unlist(use.names = FALSE) %>% as.character()
 
   # check how well the variable genes overlap between datasets
   message(glue("variable genes (1+ batches): {length(which(table(var_genes) > 0))}"))
@@ -930,9 +967,13 @@ calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
   write(glue("variable genes (3+ batches): {length(which(table(var_genes) > 2))}"), file = "create.log", append = TRUE)
 
   # genes to use for CCA, highly variable in more than one datasets and appears in all datasets
-  var_genes = names(which(table(var_genes) > 1))
-  for (i in 1:length(seurat_obj_list)) {
-    var_genes = var_genes[var_genes %in% rownames(seurat_obj_list[[i]]@scale.data)]
+  if (num_batches > 2) {
+    var_genes = names(which(table(var_genes) > 1))
+    for (i in 1:length(seurat_obj_list)) {
+      var_genes = var_genes[var_genes %in% rownames(seurat_obj_list[[i]]@scale.data)]
+    }
+  } else {
+    var_genes = union(var_genes_list[[1]], var_genes_list[[2]])
   }
   message(glue("variable genes for CCA: {length(var_genes)}"))
   write(glue("variable genes for CCA: {length(var_genes)}"), file = "create.log", append = TRUE)
@@ -942,7 +983,12 @@ calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
   message("\n\n ========== Seurat::RunMultiCCA() ========== \n\n")
 
   # run multi-set CCA (must give at least 3 objects/matrices)
-  s_obj = RunMultiCCA(seurat_obj_list, genes.use = var_genes, num.ccs = 40)
+  if (num_batches > 2) {
+    s_obj = RunMultiCCA(seurat_obj_list, genes.use = var_genes, num.ccs = 40)
+  } else {
+    s_obj = RunCCA(object = seurat_obj_list[[1]], object2 = seurat_obj_list[[2]],
+                   group.by = "batch", genes.use = var_genes, num.cc = 40)
+  }
 
   write(glue("combined cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
 
@@ -954,8 +1000,12 @@ calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
   s_obj@meta.data = s_obj@meta.data %>% select(-starts_with("res"))
 
   # save raw counts matrix
-  counts_raw = s_obj@raw.data %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene")
+  counts_raw = s_obj@raw.data %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(counts_raw, path = "counts.raw.csv.gz")
+
+  dist_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "batch",
+                      point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
+  ggsave("qc.distribution.batch.png", plot = dist_plot, width = 10, height = 5, units = "in")
 
   message("\n\n ========== Seurat::MetageneBicorPlot() ========== \n\n")
 
@@ -1019,7 +1069,8 @@ align_cca = function(seurat_obj, num_ccs) {
   # str(s_cca@dr)
 
   # save normalized and log-transformed counts matrix as a basic gzipped text file
-  counts_norm = s_obj@data %>% as.matrix() %>% round(digits = 3) %>% as.data.frame() %>% rownames_to_column("gene")
+  counts_norm = s_obj@data %>% as.matrix() %>% round(3)
+  counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(counts_norm, path = "counts.normalized.csv.gz")
 
   message("\n\n ========== Seurat::RunPCA() ========== \n\n")
@@ -1038,6 +1089,16 @@ align_cca = function(seurat_obj, num_ccs) {
   ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
   Sys.sleep(1)
 
+  # plot original samples/libraries if each batch does not correspond to a single sample/library
+  if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
+    plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
+                             pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
+    ggsave(glue("tsne.pca.{num_pcs}.sample.png"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+    Sys.sleep(1)
+    ggsave(glue("tsne.pca.{num_pcs}.sample.pdf"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+    Sys.sleep(1)
+  }
+
   # tSNE based on cca.aligned (shuffle cells so any one group does not appear overrepresented due to ordering)
   s_obj = RunTSNE(object = s_obj, reduction.use = "cca.aligned", dims.use = 1:num_ccs, do.fast = TRUE)
   plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
@@ -1046,6 +1107,16 @@ align_cca = function(seurat_obj, num_ccs) {
   Sys.sleep(1)
   ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.pdf"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
   Sys.sleep(1)
+
+  # plot original samples/libraries if each batch does not correspond to a single sample/library
+  if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
+    plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
+                             pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
+    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.png"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+    Sys.sleep(1)
+    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.pdf"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+    Sys.sleep(1)
+  }
 
   return(s_obj)
 
@@ -1073,8 +1144,8 @@ opts = docopt(doc)
 load_libraries()
 
 # global settings
-colors_samples = c(brewer.pal(9, "Set1"), brewer.pal(8, "Accent"), brewer.pal(8, "Dark2"))
-colors_clusters = c(tableau_color_pal("tableau10")(10), stata_pal("s2color")(15))
+colors_samples = c(brewer.pal(9, "Set1"), brewer.pal(8, "Dark2"))
+colors_clusters = c(pal_d3("category10")(10), pal_d3("category20b")(20))
 
 # analysis info
 analysis_step = "unknown"
@@ -1089,7 +1160,7 @@ if (opts$create || opts$combine || opts$cca) {
   message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
 
   if (dir.exists(out_dir)) {
-    stop("output dir ", out_dir, " already exists")
+    stop(glue("output analysis dir {out_dir} already exists"))
   } else {
     dir.create(out_dir)
   }
@@ -1100,7 +1171,11 @@ if (opts$create || opts$combine || opts$cca) {
 }
 
 # set analysis directory as working directory
-setwd(out_dir)
+if (dir.exists(out_dir)) {
+  setwd(out_dir)
+} else {
+  stop(glue("output analysis dir {out_dir} does not exist"))
+}
 
 # check which command was used
 if (opts$create) {

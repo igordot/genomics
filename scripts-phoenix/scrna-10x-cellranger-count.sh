@@ -28,6 +28,10 @@ mem=$(echo "$threads * 8" | bc)
 transcriptome_dir="/ifs/data/cellranger-refdata/refdata-cellranger-${genome_name}-1.2.0"
 alt_transcriptome_dir="/ifs/home/id460/ref/${genome_name}/cellranger"
 
+# unload all loaded modulefiles
+module purge
+module load local
+
 # check that input exists
 if [ ! -d "$fastq_dir" ] ; then
 	echo -e "\n ERROR: fastq dir $fastq_dir does not exist \n" >&2
@@ -48,8 +52,7 @@ fi
 # delete empty .po files to keep directory clean
 rm -rf cellranger*.po*
 
-module unload gcc
-module load cellranger/2.0.0
+module load cellranger/2.1.0
 
 # display settings
 echo " * cellranger: $(which cellranger) "
@@ -71,12 +74,12 @@ echo -e "\n $(date) \n" >&2
 
 cellranger_cmd="
 cellranger count \
---localcores $threads \
 --localmem $mem \
+--localcores $threads \
 --transcriptome $transcriptome_dir \
 --fastqs $fastq_dir \
 --sample $sample_name_fastq \
---id $sample_name_out
+--id $sample_name_out \
 "
 echo -e "\n CMD: $cellranger_cmd \n"
 $cellranger_cmd
@@ -92,7 +95,10 @@ if [ ! -s "$web_summary_html" ] ; then
 fi
 
 # copy html summary to top level for easy navigation
-rsync -tv $web_summary_html ./${sample_name_out}.html
+rsync -tv "$web_summary_html" "./${sample_name_out}.html"
+
+# delete temp files
+rm -rf "./${sample_name_out}/SC_RNA_COUNTER_CS"
 
 # delete empty .po files to keep directory clean
 rm -rf cellranger*.po*
