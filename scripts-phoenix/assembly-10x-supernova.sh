@@ -7,7 +7,7 @@
 ## Usage:
 ## qsub -N supernova -M ${USER}@nyumc.org -m ae -j y -cwd -pe threaded 16 -b y \
 ## -hard -l mem_free=512G -l mem_token=32G \
-## bash /ifs/home/id460/public/genomics/scripts-phoenix/assembly-10x-supernova.sh <fastq_dir>
+## bash /ifs/home/id460/public/genomics/scripts-phoenix/assembly-10x-supernova.sh fastq_dir [max_reads]
 ##
 
 
@@ -25,14 +25,15 @@ supernova_dir="/ifs/home/id460/software/supernova/supernova-${supernova_version}
 
 
 # check for correct number of arguments
-if [ ! $# == 1 ] ; then
+if [ $# -lt 1 ] ; then
 	echo -e "\n ERROR: wrong number of arguments supplied \n" >&2
-	echo -e "\n USAGE: bash assembly-10x-supernova.sh fastq_dir \n" >&2
+	echo -e "\n USAGE: bash assembly-10x-supernova.sh fastq_dir [max_reads] \n" >&2
 	exit 1
 fi
 
 # arguments
 fastq_dir=$(readlink -f "$1")
+max_reads="$2"
 
 # check that input exists
 if [ ! -d "$fastq_dir" ] ; then
@@ -50,7 +51,11 @@ fi
 # set the number of reads so as to achieve 56x raw coverage: (genome size) x 56 / 150, assuming 150bp reads
 # coverage significantly greater than 56x can sometimes help but can also be deleterious, depending on the dataset
 # default value is 1.2B, which only makes sense for ~3.2 Gb genomes
-max_reads_m="1200"
+if [ -n "$max_reads" ] ; then
+	max_reads_m="$max_reads"
+else
+	max_reads_m="1200"
+fi
 
 # system load settings (leave extra room for memory)
 threads=$NSLOTS
@@ -62,11 +67,12 @@ run_id="assembly-supernova-v${supernova_version_nodot}-reads${max_reads_m}M"
 
 # display settingse
 echo
-echo " * fastq dir:              $fastq_dir "
-echo " * supernova bin dir:      $supernova_dir "
-echo " * threads:                $threads "
-echo " * mem:                    $mem "
-echo " * run name (output dir):  $run_id "
+echo " * fastq dir:               $fastq_dir "
+echo " * supernova bin dir:       $supernova_dir "
+echo " * reads cutoff (million):  $max_reads_m "
+echo " * threads:                 $threads "
+echo " * mem:                     $mem "
+echo " * run name (output dir):   $run_id "
 echo
 
 echo -e "\n assembly started: $(date) \n" >&2

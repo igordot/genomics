@@ -87,19 +87,19 @@ sub main {
 		die "\n\n ERROR: binding.py does not exist \n\n";
 	}
 
-	say "annotate avinput";
+	# update file prefix since the rest will depend on MHC class
+	$base_name = "${base_name}.MHC-${mhc_class}.pad${peptide_length}";
+
+	say "annotating input mutations (avinput file)";
 	my $evf = annotate_avinput($base_name, $avinput, $annovar_annotate_pl, $annovar_refgene_txt);
 
-	say "get coding change";
+	say "getting coding change";
 	my $cod_change_fa = get_coding_change($base_name, $evf, $annovar_coding_change_pl, $annovar_refgene_txt);
 
-	say "format coding change";
+	say "formatting coding change";
 	my $mutpad_fa = format_coding_change_fa($base_name, $cod_change_fa, $peptide_length);
 
-	# update file prefix since the rest will depend on MHC class
-	$base_name = $base_name . ".MHC-" . $mhc_class;
-
-	say "predict binding";
+	say "predicting binding";
 	my $bindpred_txt;
 	if ($mhc_class eq "I") {
 		say "MHC class: I";
@@ -110,7 +110,7 @@ sub main {
 		$bindpred_txt = predict_mhc_ii_binding($base_name, $mutpad_fa, $peptide_length, $predict_binding_py);
 	}
 
-	say "annotate binding predictions";
+	say "annotating binding predictions";
 	my $annot_txt = annotate_binding_predictions($base_name, $bindpred_txt, $evf);
 	say "created $annot_txt";
 
@@ -140,10 +140,15 @@ sub annotate_avinput {
 	unless ( -e $evf ) {
 		die "\n\n ERROR: $evf DOES NOT EXIST \n\n";
 	}
+	if ( -z $evf ) {
+		die "\n\n ERROR: $evf IS EMPTY \n\n";
+	}
 
 	# clean up
 	unlink "${base_name}.log";
 	unlink "${base_name}.variant_function";
+
+	say "created $evf";
 
 	return $evf;
 }
@@ -170,11 +175,16 @@ sub get_coding_change {
 	unless ( -e $out_file ) {
 		die "\n\n ERROR: $out_file DOES NOT EXIST \n\n";
 	}
+	if ( -z $out_file ) {
+		die "\n\n ERROR: $out_file IS EMPTY \n\n";
+	}
+
+	say "created $out_file";
 
 	return $out_file;
 }
 
-# format coding change FASTA for IEDB MHC-I binding predictions
+# format coding change FASTA for IEDB binding predictions
 sub format_coding_change_fa {
 	my $base_name = $_[0];
 	my $coding_change_fa = $_[1];
@@ -183,12 +193,18 @@ sub format_coding_change_fa {
 	# sequence padding (peptide length)
 	my $padding = $peptide_length - 1;
 
-	my $out_file = "${base_name}.mutpad.${peptide_length}.fa";
+	my $out_file = "${base_name}.fa";
 
-	# process each record
+	# delete output if already exists
+	if ( -e $out_file ) {
+		unlink $out_file;
+	}
+
 	my $seqio_in = Bio::SeqIO->new(-file => $coding_change_fa, -format => 'fasta');
 	my $seqio_out = Bio::SeqIO->new(-file => ">$out_file", -format => 'fasta');
 	my $seq_num = 0;
+	# tracking WT sequence info (listed before mutant)
+	my ($seq_id_wt, $tx_name_wt, $sequence_wt, $seq_padded_wt) = ("ERR", "ERR", "ERR", "ERR");
 	while ( my $seq_in = $seqio_in->next_seq() ) {
 		# extract relevant parts
 		my $seq_id = $seq_in->id;
@@ -196,12 +212,18 @@ sub format_coding_change_fa {
 		$seq_desc =~ s/\s+$//;
 		my $sequence = $seq_in->seq;
 
+		# extract mutation details and sequence around the WT sequence (listed before mutant)
+		if ($seq_desc =~ m/(.+?)\sWILDTYPE/) {
+			$seq_id_wt = $seq_id;
+			$sequence_wt = $sequence;
+			$tx_name_wt = $1;
+		}
+
 		# process only altered sequences and single amino acid substitutions
 		if ($seq_desc !~ m/silent/ && $seq_desc =~ m/\sp\.\w\d+\w\s/) {
-			# extract mutation details and sequence around the altered amino acid
 			my ($tx_name, $aa_num, $aa_from, $aa_to, $seq_padded) = ("ERR", "ERR", "ERR", "ERR", "ERR");
+			# extract mutation details and sequence around the altered amino acid
 			if ($seq_desc =~ m/(.+?)\s.+?\(position\s(\d+)\schanged\sfrom\s(\w)\sto\s(\w)\)/) {
-				$seq_num++;
 				$tx_name = $1;
 				$aa_num = $2;
 				$aa_from = $3;
@@ -216,13 +238,21 @@ sub format_coding_change_fa {
 				$seq_padded =~ s/\*$//;
 				# say "${seq_id}\t${tx_name}\t${aa_from}${aa_num}${aa_to}\t${seq_padded}";
 
+				# repeat for WT (was processed as previous sequence)
+				my $seq_padded_wt = substr($sequence_wt, $substr_start, $substr_length);
+				$seq_padded_wt =~ s/\*$//;
+
 				# create output FASTA record and write it (binding predictions will just assign consecutive numbers)
+				$seq_num++;
 				my $new_id = "${seq_num}|${seq_id}|${tx_name}|${aa_from}${aa_num}${aa_to}|${seq_padded}";
 				my $seq_out = Bio::Seq->new(-seq => $seq_padded, -id => $new_id);
 				$seqio_out->write_seq($seq_out);
-			}
-			else {
-				# say "skip";
+
+				# create WT output FASTA record and write it (binding predictions will just assign consecutive numbers)
+				$seq_num++;
+				my $new_id_wt = "${seq_num}|${seq_id_wt}|${tx_name_wt}|WILDTYPE|${seq_padded_wt}";
+				my $seq_out_wt = Bio::Seq->new(-seq => $seq_padded_wt, -id => $new_id_wt);
+				$seqio_out->write_seq($seq_out_wt);
 			}
 		}
 	}
@@ -231,6 +261,11 @@ sub format_coding_change_fa {
 	unless ( -e $out_file ) {
 		die "\n\n ERROR: $out_file DOES NOT EXIST \n\n";
 	}
+	if ( -z $out_file ) {
+		die "\n\n ERROR: $out_file IS EMPTY \n\n";
+	}
+
+	say "created $out_file";
 
 	return $out_file;
 }
@@ -242,12 +277,11 @@ sub predict_mhc_i_binding {
 	my $peptide_length = $_[2];
 	my $predict_binding_py = $_[3];
 
-	my $raw_out_file = "${base_name}.${peptide_length}.raw.txt";
-	my $out_file = "${base_name}.${peptide_length}.txt";
+	my $raw_iedb_out_file = "${base_name}.iedb.txt";
 
 	# delete output if already exists
-	if ( -e $raw_out_file ) {
-		unlink $raw_out_file;
+	if ( -e $raw_iedb_out_file ) {
+		unlink $raw_iedb_out_file;
 	}
 
 	# a reference panel of 27 alleles (human HLA reference set with maximal population coverage)
@@ -266,42 +300,28 @@ sub predict_mhc_i_binding {
 
 		# predict_binding.py command
 		# ./src/predict_binding [method] [mhc] [peptide_length] [input_file]
-		my $predict_binding_cmd = "$predict_binding_py consensus $_ $peptide_length $mutpad_fa >> $raw_out_file";
+		my $predict_binding_cmd = "$predict_binding_py consensus $_ $peptide_length $mutpad_fa >> $raw_iedb_out_file";
 		system $predict_binding_cmd;
+
+		# confirm that binding predictions file generated
+		unless ( -e $raw_iedb_out_file ) {
+			die "\n\n ERROR: $raw_iedb_out_file DOES NOT EXIST \n\n";
+		}
+		if ( -z $raw_iedb_out_file ) {
+			die "\n\n ERROR: $raw_iedb_out_file IS EMPTY \n\n";
+		}
 	}
 
-	# confirm that binding predictions file generated
-	unless ( -e $raw_out_file ) {
-		die "\n\n ERROR: $raw_out_file DOES NOT EXIST \n\n";
-	}
-
-	# header for the combined file
-	my $bindpred_header = `cat $raw_out_file | head -1 | cut -f 1,5-`;
-	system "printf \"line_id\ttranscript_id\tp_change\taa_padded\t${bindpred_header}\" > $out_file";
-
-	# clean up input files for joining
-	system "cat $mutpad_fa | grep '^>' | cut -c 2- | tr '|' '\t' | LC_ALL=C sort -k1,1 > ${mutpad_fa}.txt";
-	system "cat $raw_out_file | grep -v '^allele' | cut -f 1,2,5- | LC_ALL=C sort -k2,2 > ${raw_out_file}.tmp";
-
-	# join, remove seq col
-	my $join_cmd = 'LC_ALL=C join -t $\'\t\' -a 1 -a 2 -1 1 -2 2';
-	$join_cmd .= " ${mutpad_fa}.txt";
-	$join_cmd .= " ${raw_out_file}.tmp";
-	$join_cmd .= " | cut -f 2-";
-	$join_cmd .= " >> $out_file";
-	system $join_cmd;
-
-	# confirm that binding predictions file generated
-	unless ( -e $out_file ) {
-		die "\n\n ERROR: $out_file DOES NOT EXIST \n\n";
-	}
+	my $merged_output = merge_binding_predictions_input_output($base_name, $mutpad_fa, $raw_iedb_out_file);
 
 	# clean up
-	unlink $mutpad_fa;
-	unlink "${mutpad_fa}.txt";
-	unlink "${raw_out_file}.tmp";
+	sleep(1);
+	# unlink $mutpad_fa;
 
-	return $out_file;
+	say "created $merged_output";
+
+	return $merged_output;
+
 }
 
 # run IEDB MHC-II Binding Predictions
@@ -311,12 +331,11 @@ sub predict_mhc_ii_binding {
 	my $peptide_length = $_[2];
 	my $predict_binding_py = $_[3];
 
-	my $raw_out_file = "${base_name}.${peptide_length}.raw.txt";
-	my $out_file = "${base_name}.${peptide_length}.txt";
+	my $raw_iedb_out_file = "${base_name}.iedb.txt";
 
 	# delete output if already exists
-	if ( -e $raw_out_file ) {
-		unlink $raw_out_file;
+	if ( -e $raw_iedb_out_file ) {
+		unlink $raw_iedb_out_file;
 	}
 
 	# mouse alleles
@@ -329,31 +348,81 @@ sub predict_mhc_ii_binding {
 		# mhc_II_binding.py command
 		# python mhc_II_binding.py prediction_method_name allele_name input_sequence_file_name
 		# Example: python mhc_II_binding.py consensus3 HLA-DRB1*03:01 test.fasta
-		# my $predict_binding_cmd = "$predict_binding_py consensus3 $_ $peptide_length $mutpad_fa >> $raw_out_file";
-		my $predict_binding_cmd = "$predict_binding_py consensus3 $_ $mutpad_fa >> $raw_out_file";
+		my $predict_binding_cmd = "$predict_binding_py consensus3 $_ $mutpad_fa >> $raw_iedb_out_file";
 		system $predict_binding_cmd;
+		say "$predict_binding_cmd";
+
+		# confirm that binding predictions file generated
+		unless ( -e $raw_iedb_out_file ) {
+			die "\n\n ERROR: $raw_iedb_out_file DOES NOT EXIST \n\n";
+		}
+		if ( -z $raw_iedb_out_file ) {
+			die "\n\n ERROR: $raw_iedb_out_file IS EMPTY \n\n";
+		}
 	}
 
-	# confirm that binding predictions file generated
-	unless ( -e $raw_out_file ) {
-		die "\n\n ERROR: $raw_out_file DOES NOT EXIST \n\n";
+	my $merged_output = merge_binding_predictions_input_output($base_name, $mutpad_fa, $raw_iedb_out_file);
+
+	# clean up
+	sleep(1);
+	# unlink $mutpad_fa;
+
+	say "created $merged_output";
+
+	return $merged_output;
+
+}
+
+# combine binding predictions input FASTA and output table
+sub merge_binding_predictions_input_output {
+	my $base_name = $_[0];
+	my $mutpad_fa = $_[1];
+	my $iedb_out_txt = $_[2];
+
+	my $out_file = "${base_name}.binding.txt";
+
+	# delete output if already exists
+	if ( -e $out_file ) {
+		unlink $out_file;
 	}
 
-	# header for the combined file
-	my $bindpred_header = `cat $raw_out_file | head -1 | cut -f 1,5-`;
-	system "printf \"line_id\ttranscript_id\tp_change\taa_padded\t${bindpred_header}\" > $out_file";
+	# $iedb_out_txt columns: allele, seq_num, start, end, peptide, ...
+	# ${mutpad_fa}.txt columns: seq_num, line_id, transcript_id, mutation, peptide
+
+	# header for the mutated and WT parts of the combined file
+	my $bindpred_header = `cat $iedb_out_txt | head -1 | cut -f 1,3,5-11`;
+	system "printf \"line_id\ttranscript_id\tp_change\taa_padded\t${bindpred_header}\" > ${out_file}.mut.txt";
+	$bindpred_header =~ s/\t/_wt\t/g;
+	system "printf \"p_change_wt\taa_padded_wt\t${bindpred_header}\" > ${out_file}.wt.txt";
 
 	# clean up input files for joining
 	system "cat $mutpad_fa | grep '^>' | cut -c 2- | tr '|' '\t' | LC_ALL=C sort -k1,1 > ${mutpad_fa}.txt";
-	system "cat $raw_out_file | grep -v '^allele' | cut -f 1,2,5- | LC_ALL=C sort -k2,2 > ${raw_out_file}.tmp";
+	system "cat $iedb_out_txt | grep -v '^allele' | LC_ALL=C sort -k2,2 -k1,1 -k3,3 | cut -f 1,2,3,5-11 > ${iedb_out_txt}.tmp";
 
-	# join, remove seq col
-	my $join_cmd = 'LC_ALL=C join -t $\'\t\' -a 1 -a 2 -1 1 -2 2';
-	$join_cmd .= " ${mutpad_fa}.txt";
-	$join_cmd .= " ${raw_out_file}.tmp";
-	$join_cmd .= " | cut -f 2-";
-	$join_cmd .= " >> $out_file";
-	system $join_cmd;
+	system "cat ${mutpad_fa}.txt | grep -v 'WILDTYPE' > ${mutpad_fa}.mut.txt";
+	system "cat ${mutpad_fa}.txt | grep 'WILDTYPE' > ${mutpad_fa}.wt.txt";
+
+	# join by seq_num, remove seq_num col, sort by line_id and start
+	my $join_mut_cmd = 'LC_ALL=C join -t $\'\t\' -a 1 -1 1 -2 2';
+	$join_mut_cmd .= " ${mutpad_fa}.mut.txt";
+	$join_mut_cmd .= " ${iedb_out_txt}.tmp";
+	$join_mut_cmd .= " | LC_ALL=C sort -k2,2 -k7,7";
+	$join_mut_cmd .= " | cut -f 2-";
+	$join_mut_cmd .= " >> ${out_file}.mut.txt";
+	system $join_mut_cmd;
+
+	# join by seq_num
+	my $join_wt_cmd = 'LC_ALL=C join -t $\'\t\' -a 1 -1 1 -2 2';
+	$join_wt_cmd .= " ${mutpad_fa}.wt.txt";
+	$join_wt_cmd .= " ${iedb_out_txt}.tmp";
+	$join_wt_cmd .= " | LC_ALL=C sort -k2,2 -k7,7";
+	$join_wt_cmd .= " | cut -f 4-";
+	$join_wt_cmd .= " >> ${out_file}.wt.txt";
+	system $join_wt_cmd;
+
+	sleep(1);
+
+	system "paste ${out_file}.mut.txt ${out_file}.wt.txt >> ${out_file}";
 
 	# confirm that binding predictions file generated
 	unless ( -e $out_file ) {
@@ -361,11 +430,16 @@ sub predict_mhc_ii_binding {
 	}
 
 	# clean up
-	unlink $mutpad_fa;
-	unlink "${mutpad_fa}.txt";
-	unlink "${raw_out_file}.tmp";
+	sleep(1);
+	# unlink $mutpad_fa;
+	unlink "${iedb_out_txt}.tmp";
+	unlink "${mutpad_fa}.mut.txt";
+	unlink "${mutpad_fa}.wt.txt";
+	unlink "${out_file}.mut.txt";
+	unlink "${out_file}.wt.txt";
 
 	return $out_file;
+
 }
 
 # combine binding predictions table with variant annotations
@@ -374,7 +448,7 @@ sub annotate_binding_predictions {
 	my $bindpred_txt = $_[1];
 	my $evf = $_[2];
 
-	my $out_file = "${base_name}.bindpred.annot.txt";
+	my $out_file = "${base_name}.binding.annot.txt";
 
 	# header for the combined file
 	my $bindpred_header = `cat $bindpred_txt | head -1 | cut -f 2-`;
@@ -383,7 +457,6 @@ sub annotate_binding_predictions {
 	# clean up input files for joining
 	system "cat $evf | LC_ALL=C sort -k1,1 | cut -f 1,3,4,5,7,8 > ${evf}.tmp";
 	system "cat $bindpred_txt | grep -v '^line_id' | LC_ALL=C sort -k1,1 > ${bindpred_txt}.tmp";
-	say "$bindpred_txt";
 
 	# join, remove seq col, add sample and mut cols, sort by consensus_percentile_rank
 	my $join_cmd = 'LC_ALL=C join -t $\'\t\' -a 2';
@@ -395,7 +468,8 @@ sub annotate_binding_predictions {
 	$join_cmd .= " >> $out_file";
 	system $join_cmd;
 
-	# delete temp files
+	# clean up
+	sleep(1);
 	unlink "${evf}.tmp";
 	unlink "${bindpred_txt}.tmp";
 

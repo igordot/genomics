@@ -442,7 +442,7 @@ calculate_variance = function(seurat_obj) {
 
   # PCHeatmap() allows for easy exploration of the primary sources of heterogeneity in a dataset
   png("variance.pc.heatmap.png", res = 200, width = 10, height = 14, units = "in")
-    PCHeatmap(s_obj, pc.use = 1:15, cells.use = 500, num.genes = 20,
+    PCHeatmap(s_obj, pc.use = 1:15, cells.use = min(ncol(s_obj@data), 500), num.genes = 20,
               do.balanced = TRUE, label.columns = FALSE, use.full = FALSE, do.return = FALSE)
   dev.off()
 
@@ -513,6 +513,7 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
 
   # reduce point size for larger datasets
   tsne_pt_size = 1
+  if (ncol(s_obj@data) < 1000) tsne_pt_size = 1.5
   if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.8
   if (ncol(s_obj@data) > 25000) tsne_pt_size = 0.6
 
@@ -520,9 +521,9 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
   s_obj = SetAllIdent(s_obj, id = "orig.ident")
   plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = tsne_pt_size,
                        colors.use = colors_samples, do.return = TRUE)
-  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
+  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.png"), plot = plot_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
+  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.pdf"), plot = plot_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
 
   # remove redundant, rename, and plot clusters for calculated resolutions
@@ -603,19 +604,16 @@ plot_clusters = function(seurat_obj, resolution, plot_filename) {
 
     # reduce point size for larger datasets
     tsne_pt_size = 1
+    if (ncol(s_obj@data) < 1000) tsne_pt_size = 1.5
     if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.8
     if (ncol(s_obj@data) > 25000) tsne_pt_size = 0.6
 
     # shuffle cells so they appear randomly and one group does not show up on top
     plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = tsne_pt_size,
                          colors.use = colors_clusters, do.return = TRUE)
-    plot_filename_png = glue("{plot_filename}.png")
-    message("save tSNE plot: ", plot_filename_png)
-    ggsave(plot_filename_png, plot = plot_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("{plot_filename}.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
     Sys.sleep(1)
-    plot_filename_pdf = glue("{plot_filename}.pdf")
-    message("save tSNE plot: ", plot_filename_pdf)
-    ggsave(plot_filename_pdf, plot = plot_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("{plot_filename}.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
     Sys.sleep(1)
 
     if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
@@ -846,7 +844,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
         # find differentially expressed genes between two specific clusters
         # low fold change cutoff to maximize chance of appearing in all comparisons
         cur_markers = FindMarkers(seurat_obj, ident.1 = cluster1, ident.2 = cluster2, test.use = test,
-                                  logfc.threshold = log(1.1), min.pct = 0.2,
+                                  logfc.threshold = log(1.1), min.pct = 0.1,
                                   only.pos = TRUE, print.bar = FALSE)
 
         # clean up markers table (would need to be modified for "roc" test)
@@ -936,7 +934,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 }
 
 # calculate differentially expressed genes within each cluster
-calculate_cluster_de_genes = function(seurat_obj, label) {
+calculate_cluster_de_genes = function(seurat_obj, label, test) {
 
   message("\n\n ========== calculate cluster DE genes ========== \n\n")
 
@@ -945,7 +943,7 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
   if (!dir.exists(de_dir)) dir.create(de_dir)
 
   # common settings
-  num_de_genes = 100
+  num_de_genes = 50
 
   # cluster names
   clusters = seurat_obj@ident %>% as.character() %>% unique() %>% sort()
@@ -965,7 +963,7 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
     message("cluster groups: ", paste(levels(clust_obj@ident), collapse = ", "))
 
     # continue if cluster has multiple groups and more than 100 cells and more than 10 cells per group
-    if (length(unique(clust_obj@ident)) > 1 && ncol(clust_obj@data) > 100 && min(table(clust_obj@ident)) > 10) {
+    if (length(unique(clust_obj@ident)) > 1 && ncol(clust_obj@data) > 50 && min(table(clust_obj@ident)) > 10) {
 
       # iterate through sample/library combinations (relevant if more than two)
       group_combinations = combn(levels(clust_obj@ident), m = 2, simplify = TRUE)
@@ -974,13 +972,13 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
         # determine combination
         s1 = group_combinations[1, combination_num]
         s2 = group_combinations[2, combination_num]
-        comparison_name = glue("{s1}-vs-{s2}")
-        message("comparison: ", comparison_name)
+        comparison_label = glue("{s1}-vs-{s2}")
+        message(glue("comparison: {clust_name} {comparison_label}"))
 
-        filename_label = glue("{de_dir}/de.{label}-{clust_name}.{comparison_name}")
+        filename_label = glue("{de_dir}/de.{label}-{clust_name}.{comparison_label}.{test}")
 
         # find differentially expressed genes (default Wilcoxon rank sum test)
-        de_genes = FindMarkers(clust_obj, ident.1 = s1, ident.2 = s2, test.use = "wilcox",
+        de_genes = FindMarkers(clust_obj, ident.1 = s1, ident.2 = s2, test.use = test,
                                logfc.threshold = log(1.1), min.pct = 0.1,
                                only.pos = FALSE, print.bar = FALSE)
 
@@ -988,28 +986,27 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
         de_genes = de_genes %>%
           rownames_to_column("gene") %>%
           select(gene, avg_logFC, p_val, p_val_adj) %>%
-          filter(p_val_adj < 0.01) %>%
+          filter(p_val < 0.01) %>%
           mutate(avg_logFC = round(avg_logFC, 3)) %>%
           arrange(p_val_adj, p_val)
 
+        message(glue("num DE genes (p<0.01): {nrow(de_genes)}"))
+
         # save stats table
-        genes_csv = glue("{filename_label}.csv")
-        message("genes: ", genes_csv)
-        write_excel_csv(de_genes, path = genes_csv)
+        write_excel_csv(de_genes, path = glue("{filename_label}.stats.csv"))
 
         # heatmap of top genes if any significant genes are present
         if (nrow(de_genes) > 5) {
           top_de_genes = de_genes %>% top_n(num_de_genes, -p_val_adj) %>% arrange(avg_logFC) %>% pull(gene)
           plot_hm = DoHeatmap(clust_obj, genes.use = top_de_genes,
-                              use.scaled = TRUE, remove.key = TRUE, slim.col.label = TRUE,
+                              use.scaled = TRUE, remove.key = FALSE, slim.col.label = TRUE,
                               col.low = "lemonchiffon", col.mid = "gold2", col.high = "red3",
-                              cex.row = 8, cex.col = 0.5, group.cex = 15, disp.min = -2, disp.max = 2)
-          heatmap_png = glue("{filename_label}.top{num_de_genes}.heatmap.png")
-          message("heatmap png: ", heatmap_png)
-          ggsave(heatmap_png, plot = plot_hm, width = 15, height = 10, units = "in")
-          heatmap_pdf = glue("{filename_label}.top{num_de_genes}.heatmap.pdf")
-          message("heatmap pdf: ", heatmap_pdf)
-          ggsave(heatmap_pdf, plot = plot_hm, width = 15, height = 10, units = "in")
+                              cex.row = 10, cex.col = 0.5, group.cex = 15, disp.min = -2, disp.max = 2)
+          heatmap_prefix = glue("{filename_label}.heatmap.top{num_de_genes}")
+          ggsave(glue("{heatmap_prefix}.png"), plot = plot_hm, width = 15, height = 10, units = "in")
+          Sys.sleep(1)
+          ggsave(glue("{heatmap_prefix}.pdf"), plot = plot_hm, width = 15, height = 10, units = "in")
+          Sys.sleep(1)
         }
 
       }
@@ -1019,6 +1016,8 @@ calculate_cluster_de_genes = function(seurat_obj, label) {
       message("skip cluster: ", clust_name)
 
     }
+
+    message(" ")
 
   }
 
@@ -1211,18 +1210,18 @@ align_cca = function(seurat_obj, num_ccs) {
   s_obj = RunTSNE(object = s_obj, reduction.use = "pca", dims.use = 1:num_pcs, do.fast = TRUE)
   plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
                            pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
-  ggsave(glue("tsne.pca.{num_pcs}.batch.png"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+  ggsave(glue("tsne.pca.{num_pcs}.batch.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+  ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
 
   # plot original samples/libraries if each batch does not correspond to a single sample/library
   if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
     plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
                              pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
-    ggsave(glue("tsne.pca.{num_pcs}.sample.png"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("tsne.pca.{num_pcs}.sample.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("tsne.pca.{num_pcs}.sample.pdf"), plot = plot_pca_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("tsne.pca.{num_pcs}.sample.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
     Sys.sleep(1)
   }
 
@@ -1230,18 +1229,18 @@ align_cca = function(seurat_obj, num_ccs) {
   s_obj = RunTSNE(object = s_obj, reduction.use = "cca.aligned", dims.use = 1:num_ccs, do.fast = TRUE)
   plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
                            pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
-  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.png"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.png"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.pdf"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.pdf"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
 
   # plot original samples/libraries if each batch does not correspond to a single sample/library
   if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
     plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
                              pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
-    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.png"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.png"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.pdf"), plot = plot_cca_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.pdf"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
     Sys.sleep(1)
   }
 
@@ -1395,13 +1394,18 @@ if (opts$create) {
       # cluster stat tables (number of cells and average expression)
       calculate_cluster_stats(seurat_obj, label = clust_label)
 
-      # plot cluster markers
+      # calculate and plot standard cluster markers
       calculate_cluster_markers(seurat_obj, label = clust_label, test = "roc")
       calculate_cluster_markers(seurat_obj, label = clust_label, test = "wilcox")
       # calculate_cluster_markers(seurat_obj, label = clust_label, test = "bimod")
-      calculate_cluster_markers(seurat_obj, label = clust_label, test = "wilcox", pairwise = TRUE)
-      calculate_cluster_markers(seurat_obj, label = clust_label, test = "bimod", pairwise = TRUE)
-      calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST", pairwise = TRUE)
+
+      # calculate and plot pairwise cluster markers (very slow, so skip for high number of clusters)
+      num_clusters = seurat_obj@ident %>% unique() %>% as.character() %>% length()
+      if (num_clusters < 20) {
+        calculate_cluster_markers(seurat_obj, label = clust_label, test = "wilcox", pairwise = TRUE)
+        calculate_cluster_markers(seurat_obj, label = clust_label, test = "bimod", pairwise = TRUE)
+        # calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST", pairwise = TRUE)
+      }
 
     }
 
@@ -1425,7 +1429,9 @@ if (opts$create) {
           analysis_step = "diff"
           message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
 
-          calculate_cluster_de_genes(seurat_obj, label = clust_label)
+          calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "wilcox")
+          calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "bimod")
+          calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "MAST")
 
       }
 

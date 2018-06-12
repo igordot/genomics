@@ -19,8 +19,12 @@ Options:
 ' -> doc
 
 
+# output width
+options(width = 120)
 # print warnings as they occur
 options(warn = 1)
+# default type for the bitmap devices such as png (should default to "cairo")
+options(bitmapType = "cairo")
 
 # retrieve the command-line arguments
 suppressPackageStartupMessages(library(docopt))
@@ -45,8 +49,10 @@ ploidy = 2
 # maximum copy number level to plot (to avoid very high values)
 max_cn = 8
 
-# import ratio table (cap at defined maximum value)
-ratio = read_tsv(ratio_txt, guess_max = 999999) %>%
+# import ratio table, remove uncertain regions, and cap copy numbers at defined maximum value
+ratio =
+  read_tsv(ratio_txt, guess_max = 999999, progress = FALSE) %>%
+  filter(CopyNumber >= 0) %>%
   mutate(chr = Chromosome, start = Start, end = Start) %>%
   mutate(Ratio = Ratio * ploidy) %>%
   mutate(CopyNumber = ifelse(CopyNumber > max_cn, max_cn, CopyNumber)) %>%
@@ -69,7 +75,8 @@ pp = getDefaultPlotParams(plot.type = 4)
 pp$data1inmargin = 0
 pp$bottommargin = 50
 pp$ideogramheight = 20
-kp = plotKaryotype(genome = genome, plot.type = 4, ideogram.plotter = NULL, labels.plotter = NULL, plot.params = pp) %>%
+kp =
+  plotKaryotype(genome = genome, plot.type = 4, ideogram.plotter = NULL, labels.plotter = NULL, plot.params = pp) %>%
   kpAxis(ymin = 0, ymax = max_cn, tick.pos = 0:max_cn) %>%
   kpAddCytobandsAsLine() %>%
   kpAddChromosomeNames(srt = 45) %>%
