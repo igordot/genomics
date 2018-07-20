@@ -2,7 +2,7 @@
 
 
 "
-Analysis of 10x Genomics Chromium single cell RNA-seq data using Seurat (version 2.2) starting with Cell Ranger output.
+Analysis of 10x Genomics Chromium single cell RNA-seq data using Seurat (version 2.3) starting with Cell Ranger output.
 
 Basic workflow steps:
   1 - create - import counts matrix, perform initial QC, and calculate various variance metrics (slowest step)
@@ -50,6 +50,7 @@ load_libraries = function() {
   suppressPackageStartupMessages(library(RColorBrewer))
   suppressPackageStartupMessages(library(ggsci))
   suppressPackageStartupMessages(library(eulerr))
+  suppressPackageStartupMessages(library(UpSetR))
 
 }
 
@@ -308,6 +309,8 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   # log to file
   write(glue("filtered genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
   write(glue("filtered cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
+  write(glue("filtered mean num genes: {mean(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
+  write(glue("filtered median num genes: {median(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
 
   return(s_obj)
 
@@ -414,7 +417,8 @@ calculate_variance = function(seurat_obj) {
   # scaled z-scored residuals of these models are stored in scale.data slot
   # used for dimensionality reduction and clustering
   # RegressOut function has been deprecated, and replaced with the vars.to.regress argument in ScaleData
-  s_obj = ScaleData(s_obj, vars.to.regress = c("nUMI", "percent.mito"), display.progress = FALSE)
+  s_obj = ScaleData(s_obj, vars.to.regress = c("nUMI", "percent.mito"),
+                    do.par = TRUE, num.cores = 4, display.progress = FALSE)
 
   message("\n\n ========== Seurat::PCA() ========== \n\n")
 
@@ -458,7 +462,7 @@ calculate_variance = function(seurat_obj) {
     message("\n\n ========== Seurat::JackStraw() ========== \n\n")
 
     # identify significant PCs as those who have a strong enrichment of low p-value genes
-    s_obj = JackStraw(s_obj, num.pc = 40, do.print = FALSE)
+    s_obj = JackStraw(s_obj, num.pc = 40, do.par = TRUE, num.cores = 4)
 
     # compare the distribution of p-values for each PC with a uniform distribution (dashed line)
     # significant PCs will show a strong enrichment of genes with low p-values (solid curve above the dashed line)
@@ -468,6 +472,18 @@ calculate_variance = function(seurat_obj) {
   }
 
   return(s_obj)
+
+}
+
+# determine point size for tSNE plots (smaller for larger datasets)
+get_tsne_point_size = function(seurat_obj) {
+
+  pt_size = 1
+  if (ncol(seurat_obj@data) < 1000) pt_size = 1.5
+  if (ncol(seurat_obj@data) > 10000) pt_size = 0.8
+  if (ncol(seurat_obj@data) > 25000) pt_size = 0.6
+
+  return(pt_size)
 
 }
 
@@ -487,15 +503,13 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
 
   message("initial meta.data fields: ", paste(colnames(s_obj@meta.data), collapse = ", "))
 
-  # graph-based clustering approach
-  # clusters are saved in the object@ident slot
-  # save the SNN so that the algorithm can be rerun using the same graph, but with different resolutions
-  # increased resolution values lead to more clusters (0.6-1.2 for 3K cells, 2-4 for 33K cells)
-  # try multiple resolutions here (will be saved as s_obj@data.info columns)
+  # resolutions for graph-based clustering
+  # increased resolution values lead to more clusters (recommendation: 0.6-1.2 for 3K cells, 2-4 for 33K cells)
   res_range = seq(0.1, 2.5, 0.1)
-  if (ncol(s_obj@data) > 10000) res_range = seq(0.1, 3.5, 0.1)
+  if (ncol(s_obj@data) > 1000) res_range = c(res_range, 3, 4, 5, 6, 7, 8)
 
   # algorithm: 1 = original Louvain; 2 = Louvain with multilevel refinement; 3 = SLM
+  # save the SNN so that the algorithm can be rerun using the same graph, but with different resolutions
   # FindClusters() uses "reduction.type" and RunTSNE() uses "reduction.use", so that may change in the future
   s_obj = FindClusters(s_obj, reduction.type = reduction_type, dims.use = 1:num_dim,
                        algorithm = 3, resolution = res_range,
@@ -512,10 +526,7 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
   s_obj = RunTSNE(s_obj, reduction.use = reduction_type, dims.use = 1:num_dim, do.fast = TRUE)
 
   # reduce point size for larger datasets
-  tsne_pt_size = 1
-  if (ncol(s_obj@data) < 1000) tsne_pt_size = 1.5
-  if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.8
-  if (ncol(s_obj@data) > 25000) tsne_pt_size = 0.6
+  tsne_pt_size = get_tsne_point_size(s_obj)
 
   # tSNE using original sample names (shuffle cells so any one group does not appear overrepresented due to ordering)
   s_obj = SetAllIdent(s_obj, id = "orig.ident")
@@ -526,24 +537,30 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
   ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.pdf"), plot = plot_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
 
-  # remove redundant, rename, and plot clusters for calculated resolutions
+  # create a separate sub-directory for cluster resolution plots
+  clusters_dir = "clusters-resolutions"
+  if (!dir.exists(clusters_dir)) dir.create(clusters_dir)
+
+  # for calculated cluster resolutions: remove redundant (same number of clusters), rename, and plot
   res_cols = grep("^res.", colnames(s_obj@meta.data), value = TRUE)
   res_cols = sort(res_cols)
   res_num_clusters_prev = 2
   for (res in res_cols) {
 
-    # proceed if current resolution has more clusters than previous
+    # proceed if current resolution has more clusters than previous and less than 80 (limited by the color scheme)
     res_num_clusters_cur = s_obj@meta.data[, res] %>% unique() %>% length()
-    if (res_num_clusters_cur > res_num_clusters_prev) {
+    if (res_num_clusters_cur > res_num_clusters_prev && res_num_clusters_cur < 80) {
 
       # check if the resolution still has original labels (characters starting with 0)
       if (min(s_obj@meta.data[, res]) == "0") {
+
         # relabel identities so they start with 1 and not 0
         s_obj@meta.data[, res] = as.numeric(s_obj@meta.data[, res]) + 1
         # pad with 0s to avoid sorting issues
         s_obj@meta.data[, res] = str_pad(s_obj@meta.data[, res], width = 2, side = "left", pad = "0")
         # pad with "C" to avoid downstream numeric conversions
         s_obj@meta.data[, res] = str_c("C", s_obj@meta.data[, res])
+
       }
 
       # resolution value based on resolution column name
@@ -552,9 +569,9 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
       # plot file name
       res_str = gsub("\\.", "", res)
       num_clusters = s_obj@meta.data %>% pull(res) %>% unique() %>% length()
-      filename = glue("tsne.{reduction_type}.{num_dim}.{res_str}.clust{num_clusters}")
+      filename = glue("{clusters_dir}/tsne.{reduction_type}.{num_dim}.{res_str}.clust{num_clusters}")
 
-      s_obj = plot_clusters(seurat_obj = s_obj, resolution = res_val, plot_filename = filename)
+      s_obj = plot_clusters(seurat_obj = s_obj, resolution = res_val, filename_base = filename)
 
       # add blank line to make output easier to read
       message(" ")
@@ -580,14 +597,14 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
   tsne_tbl = s_obj@dr$tsne@cell.embeddings %>%
     round(3) %>% as.data.frame() %>% rownames_to_column("cell") %>% as_tibble()
   cells_metadata = full_join(metadata_tbl, tsne_tbl, by = "cell") %>% arrange(cell)
-  write_excel_csv(cells_metadata, path = glue("metadata.csv"))
+  write_excel_csv(cells_metadata, path = "metadata.csv")
 
   return(s_obj)
 
 }
 
 # plot tSNE with color-coded clusters at specified resolution
-plot_clusters = function(seurat_obj, resolution, plot_filename) {
+plot_clusters = function(seurat_obj, resolution, filename_base) {
 
   s_obj = seurat_obj
 
@@ -600,20 +617,14 @@ plot_clusters = function(seurat_obj, resolution, plot_filename) {
   message("num clusters: ", num_clusters)
 
   # generate plot if there is a reasonable number of clusters
-  if (num_clusters > 2 && num_clusters < 50) {
-
-    # reduce point size for larger datasets
-    tsne_pt_size = 1
-    if (ncol(s_obj@data) < 1000) tsne_pt_size = 1.5
-    if (ncol(s_obj@data) > 10000) tsne_pt_size = 0.8
-    if (ncol(s_obj@data) > 25000) tsne_pt_size = 0.6
+  if (num_clusters > 2 && num_clusters < 80) {
 
     # shuffle cells so they appear randomly and one group does not show up on top
-    plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = tsne_pt_size,
+    plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = get_tsne_point_size(s_obj),
                          colors.use = colors_clusters, do.return = TRUE)
-    ggsave(glue("{plot_filename}.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("{filename_base}.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("{plot_filename}.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("{filename_base}.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
     Sys.sleep(1)
 
     if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
@@ -731,30 +742,66 @@ calculate_cluster_stats = function(seurat_obj, label) {
   cells_metadata = full_join(metadata_tbl, tsne_tbl, by = "cell") %>% arrange(cell)
   write_excel_csv(cells_metadata, path = glue("metadata.{label}.csv"))
 
-  # get number of cells per cluster
-  num_cells_per_cluster = tibble(cluster = seurat_obj@ident)
-  num_cells_per_cluster = num_cells_per_cluster %>% group_by(cluster) %>% summarize(num_cells = n())
-  write_excel_csv(num_cells_per_cluster, path = glue("summary.{label}.csv"))
+  # get number of cells split by cluster and by sample
+  summary_cluster_sample =
+    cells_metadata %>%
+    select(cluster, sample) %>%
+    mutate(num_cells_total = n()) %>%
+    group_by(sample) %>%
+    mutate(num_cells_sample = n()) %>%
+    group_by(cluster) %>%
+    mutate(num_cells_cluster = n()) %>%
+    group_by(cluster, sample) %>%
+    mutate(num_cells_cluster_sample = n()) %>%
+    ungroup() %>%
+    distinct() %>%
+    mutate(
+      pct_cells_cluster = num_cells_cluster / num_cells_total,
+      pct_cells_cluster_sample = num_cells_cluster_sample / num_cells_sample
+    ) %>%
+    mutate(
+      pct_cells_cluster = round(pct_cells_cluster * 100, 1),
+      pct_cells_cluster_sample = round(pct_cells_cluster_sample * 100, 1)
+    ) %>%
+    arrange(cluster, sample)
 
-  # create a separate sub-directory for expression values
-  exp_dir = "expression"
-  if (!dir.exists(exp_dir)) dir.create(exp_dir)
+  # get number of cells split by cluster (ignore samples)
+  summary_cluster = summary_cluster_sample %>% select(-contains("sample")) %>% distinct()
+  write_excel_csv(summary_cluster, path = glue("summary.{label}.csv"))
 
   # gene expression for an "average" cell in each identity class (averaging and output are in non-log space)
-  # add add.ident if you want to observe cluster averages separated by replicate
   cluster_avg_exp = AverageExpression(seurat_obj, show.progress = FALSE)
   cluster_avg_exp = cluster_avg_exp %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
-  cluster_avg_exp_filename = glue("{exp_dir}/exp.{label}.mean.csv")
-  write_excel_csv(cluster_avg_exp, path = cluster_avg_exp_filename)
+  write_excel_csv(cluster_avg_exp, path = glue("expression.mean.{label}.csv"))
+
+  Sys.sleep(1)
+
+  # export results split by sample if multiple samples are present
+  num_samples = cells_metadata %>% pull(sample) %>% n_distinct()
+  if (num_samples > 1) {
+
+    # number of cells split by cluster and by sample
+    write_excel_csv(summary_cluster_sample, path = glue("summary.{label}.per-sample.csv"))
+
+    # cluster averages split by sample
+    sample_avg_exp = AverageExpression(seurat_obj, add.ident = "orig.ident", show.progress = FALSE)
+    sample_avg_exp = sample_avg_exp %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+    write_excel_csv(sample_avg_exp, path = glue("expression.mean.{label}.per-sample.csv"))
+
+  }
+
+  # create a separate sub-directory for expression values
+  exp_dir = "expression-cells"
+  if (!dir.exists(exp_dir)) dir.create(exp_dir)
 
   # create cell-gene matrix for each cluster
   clusters = seurat_obj@ident %>% as.character() %>% unique() %>% sort()
-  for (clust_name in clusters) {
+  for (cluster_name in clusters) {
 
-    message("cluster name: ", clust_name)
+    message("cluster name: ", cluster_name)
 
     # subset seurat_obj to only one group
-    seurat_subset = SubsetData(seurat_obj, ident.use = clust_name)
+    seurat_subset = SubsetData(seurat_obj, ident.use = cluster_name)
 
     # create matrix and remove genes with no counts
     cluster_exp = seurat_subset@data %>% as.matrix() %>% round(3)
@@ -764,13 +811,20 @@ calculate_cluster_stats = function(seurat_obj, label) {
     message("cluster genes: ", nrow(cluster_exp))
     message("cluster cells: ", ncol(cluster_exp) - 1)
 
-    clust_exp_csv = glue("{exp_dir}/exp.{label}-{clust_name}.cells.csv.gz")
+    clust_exp_csv = glue("{exp_dir}/expression.cells.{label}-{cluster_name}.csv.gz")
     write_excel_csv(cluster_exp, path = clust_exp_csv)
+
   }
 
 }
 
 # calculate cluster markers (compared to all other cells) and plot top ones
+# tests:
+# - roc: ROC test returns the classification power (ranging from 0 - random, to 1 - perfect)
+# - wilcox: Wilcoxon rank sum test (default in Seurat 2)
+# - bimod: Likelihood-ratio test for single cell gene expression (McDavid, Bioinformatics, 2013) (default in Seurat 1)
+# - tobit: Tobit-test for differential gene expression (Trapnell, Nature Biotech, 2014)
+# - MAST: GLM-framework that treates cellular detection rate as a covariate (Finak, Genome Biology, 2015)
 # pairwise option compares each cluster to each of the other clusters to yield markers that are both local and global
 calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) {
 
@@ -791,13 +845,15 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 
     markers_dir = "markers-global"
 
-    all_markers = FindAllMarkers(seurat_obj, logfc.threshold = log(1.2), min.pct = 0.20, min.diff.pct = -Inf,
-                                 test.use = test, only.pos = FALSE, print.bar = FALSE)
+    # capture output to avoid excessive warnings
+    markers_log = capture.output({
+      all_markers = FindAllMarkers(seurat_obj, logfc.threshold = log(1.2), min.pct = 0.20, min.diff.pct = -Inf,
+                                   test.use = test, only.pos = FALSE, print.bar = FALSE)
+    }, type = "message")
 
-    # do some light filtering and clean up (different tests return slightly different output)
+    # do some light filtering and clean up (ROC test returns slightly different output)
     if (test == "roc") {
 
-      # ROC test returns the classification power (ranging from 0 - random, to 1 - perfect)
       all_markers =
         all_markers %>%
         select(cluster, gene, avg_logFC, myAUC, power) %>%
@@ -808,9 +864,6 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 
     } else {
 
-      # wilcox: Wilcoxon rank sum test (default in Seurat 2)
-      # bimod: likelihood-ratio test for single cell gene expression based on zero-inflated data (default in Seurat 1)
-      # tobit: Tobit-test for differential gene expression as in Trapnell et al., Nature Biotech, 2014
       all_markers =
         all_markers %>%
         select(cluster, gene, avg_logFC, p_val, p_val_adj) %>%
@@ -843,9 +896,12 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 
         # find differentially expressed genes between two specific clusters
         # low fold change cutoff to maximize chance of appearing in all comparisons
-        cur_markers = FindMarkers(seurat_obj, ident.1 = cluster1, ident.2 = cluster2, test.use = test,
-                                  logfc.threshold = log(1.1), min.pct = 0.1,
-                                  only.pos = TRUE, print.bar = FALSE)
+        # capture output to avoid excessive warnings
+        markers_log = capture.output({
+          cur_markers = FindMarkers(seurat_obj, ident.1 = cluster1, ident.2 = cluster2, test.use = test,
+                                    logfc.threshold = log(1.1), min.pct = 0.1,
+                                    only.pos = TRUE, print.bar = FALSE)
+        }, type = "message")
 
         # clean up markers table (would need to be modified for "roc" test)
         cur_markers =
@@ -1062,23 +1118,30 @@ calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
     write(glue("sample dir: {basename(batch_analysis_dir)}"), file = "create.log", append = TRUE)
     write(glue("sample cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
 
-    # top 2,000 genes with the highest dispersion (var/mean) from both datasets
+    # top 1,000 genes with the highest dispersion (var/mean) from both datasets
     # "rownames in hvg.info are sorted by the variance/mean ratio, which usually works quite well for UMI data"
     # "we chose to take the top 2k genes as it was easy for each dataset to contribute the same number of genes"
     # https://github.com/satijalab/seurat/issues/227
-    batch_var_genes = s_obj@hvg.info %>% head(2000) %>% rownames()
+    batch_var_genes = s_obj@hvg.info %>% head(1000) %>% rownames()
     var_genes_list[[batch_name]] = batch_var_genes
 
   }
 
-  # venn plot of variable gene overlaps
-  colors_euler = colors_samples[1:length(var_genes_list)]
-  euler_fit = euler(var_genes_list, shape = "ellipse")
-  euler_plot = plot(euler_fit,
-                    fills = list(fill = colors_euler, alpha = 0.7),
-                    edges = list(col = colors_euler))
-  png("variance.vargenes.png", res = 200, width = 5, height = 5, units = "in")
-    print(euler_plot)
+  # euler plot of variable gene overlaps (becomes unreadable can take days for many overlaps)
+  if (length(var_genes_list) < 10) {
+    colors_euler = colors_samples[1:length(var_genes_list)]
+    euler_fit = euler(var_genes_list, shape = "ellipse")
+    euler_plot = plot(euler_fit,
+                      fills = list(fill = colors_euler, alpha = 0.7),
+                      edges = list(col = colors_euler))
+    png("variance.vargenes.euler.png", res = 200, width = 5, height = 5, units = "in")
+      print(euler_plot)
+    dev.off()
+  }
+
+  # upset plot of variable gene overlaps
+  png("variance.vargenes.upset.png", res = 200, width = 8, height = 5, units = "in")
+    upset(fromList(var_genes_list), nsets = 50, nintersects = 15, order.by = "freq", mb.ratio = c(0.5, 0.5))
   dev.off()
 
   # convert list of variable genes per batch into a single vector
@@ -1092,15 +1155,18 @@ calculate_cca = function(original_wd, batch_names, batch_analysis_dirs) {
   message(glue("variable genes (3+ batches): {length(which(table(var_genes) > 2))}"))
   write(glue("variable genes (3+ batches): {length(which(table(var_genes) > 2))}"), file = "create.log", append = TRUE)
 
-  # genes to use for CCA, highly variable in more than one datasets and appears in all datasets
+  # select genes to use for CCA: highly variable in more than one datasets
   if (num_batches > 2) {
     var_genes = names(which(table(var_genes) > 1))
-    for (i in 1:length(seurat_obj_list)) {
-      var_genes = var_genes[var_genes %in% rownames(seurat_obj_list[[i]]@scale.data)]
-    }
   } else {
     var_genes = union(var_genes_list[[1]], var_genes_list[[2]])
   }
+
+  # select genes to use for CCA: present in all datasets
+  for (i in 1:length(seurat_obj_list)) {
+    var_genes = var_genes[var_genes %in% rownames(seurat_obj_list[[i]]@scale.data)]
+  }
+
   message(glue("variable genes for CCA: {length(var_genes)}"))
   write(glue("variable genes for CCA: {length(var_genes)}"), file = "create.log", append = TRUE)
 
@@ -1177,13 +1243,15 @@ align_cca = function(seurat_obj, num_ccs) {
 
   message(glue("discarded cells: {nrow(s_obj_discarded@meta.data)}"))
   write(glue("discarded cells: {nrow(s_obj_discarded@meta.data)}"), file = "create.log", append = TRUE)
-  message(glue("discarded median genes: {median(s_obj_discarded@meta.data$nGene)}"))
-  write(glue("discarded median genes: {median(s_obj_discarded@meta.data$nGene)}"), file = "create.log", append = TRUE)
+  message(glue("discarded median num genes: {median(s_obj_discarded@meta.data$nGene)}"))
+  write(glue("discarded median num genes: {median(s_obj_discarded@meta.data$nGene)}"), file = "create.log", append = TRUE)
 
   message(glue("passing cells: {nrow(s_obj@meta.data)}"))
   write(glue("passing cells: {nrow(s_obj@meta.data)}"), file = "create.log", append = TRUE)
-  message(glue("passing median genes: {median(s_obj@meta.data$nGene)}"))
-  write(glue("passing median genes: {median(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
+  message(glue("passing mean num genes: {mean(s_obj@meta.data$nGene)}"))
+  write(glue("passing mean num genes: {mean(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
+  message(glue("passing median num genes: {median(s_obj@meta.data$nGene)}"))
+  write(glue("passing median num genes: {median(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
 
   message("\n\n ========== Seurat::AlignSubspace() ========== \n\n")
 
@@ -1202,33 +1270,39 @@ align_cca = function(seurat_obj, num_ccs) {
   message("\n\n ========== Seurat::RunPCA() ========== \n\n")
 
   # compute PCA to compare with CCA alignment
-  s_obj = RunPCA(object = s_obj, pc.genes = s_obj@var.genes, pcs.compute = 50,
+  # find variable genes using the usual method, not the hvg.info genes from each sample used for CCA
+  s_fvg_obj = FindVariableGenes(s_obj, mean.function = ExpMean, dispersion.function = LogVMR,
+                                x.low.cutoff = 0.05, x.high.cutoff = 3, y.cutoff = 0.5, display.progress = FALSE)
+  s_obj = RunPCA(object = s_obj, pc.genes = s_fvg_obj@var.genes, pcs.compute = 50,
                  do.print = FALSE, pcs.print = 3, genes.print = 5)
 
-  # tSNE based on PCA (shuffle cells so any one group does not appear overrepresented due to ordering)
-  num_pcs = 30
-  s_obj = RunTSNE(object = s_obj, reduction.use = "pca", dims.use = 1:num_pcs, do.fast = TRUE)
-  plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
-                           pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
-  ggsave(glue("tsne.pca.{num_pcs}.batch.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
-  Sys.sleep(1)
-  ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
-  Sys.sleep(1)
+  # tSNE based on PCA with different number of dimensions
+  for (num_pcs in c(10, 20, 30)) {
 
-  # plot original samples/libraries if each batch does not correspond to a single sample/library
-  if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
-    plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
-                             pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
-    ggsave(glue("tsne.pca.{num_pcs}.sample.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+    s_obj = RunTSNE(object = s_obj, reduction.use = "pca", dims.use = 1:num_pcs, do.fast = TRUE)
+    plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
+                             pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
+    ggsave(glue("tsne.pca.{num_pcs}.batch.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("tsne.pca.{num_pcs}.sample.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+    ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
     Sys.sleep(1)
+
+    # plot original samples/libraries if each batch does not correspond to a single sample/library
+    if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
+      plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
+                               pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
+      ggsave(glue("tsne.pca.{num_pcs}.sample.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+      Sys.sleep(1)
+      ggsave(glue("tsne.pca.{num_pcs}.sample.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+      Sys.sleep(1)
+    }
+
   }
 
-  # tSNE based on cca.aligned (shuffle cells so any one group does not appear overrepresented due to ordering)
+  # tSNE based on cca.aligned
   s_obj = RunTSNE(object = s_obj, reduction.use = "cca.aligned", dims.use = 1:num_ccs, do.fast = TRUE)
   plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
-                           pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
+                           pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
   ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.png"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
   Sys.sleep(1)
   ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.pdf"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
@@ -1237,7 +1311,7 @@ align_cca = function(seurat_obj, num_ccs) {
   # plot original samples/libraries if each batch does not correspond to a single sample/library
   if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
     plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
-                             pt.size = 0.8, colors.use = colors_samples, do.return = TRUE)
+                             pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
     ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.png"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
     Sys.sleep(1)
     ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.pdf"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
@@ -1389,7 +1463,7 @@ if (opts$create) {
 
       # create tSNE plot (should already exist in the main directory)
       tsne_filename = glue("tsne.{grouping_label}.{clust_label}")
-      seurat_obj = plot_clusters(seurat_obj, resolution = opts$resolution, plot_filename = tsne_filename)
+      seurat_obj = plot_clusters(seurat_obj, resolution = opts$resolution, filename_base = tsne_filename)
 
       # cluster stat tables (number of cells and average expression)
       calculate_cluster_stats(seurat_obj, label = clust_label)
@@ -1397,31 +1471,20 @@ if (opts$create) {
       # calculate and plot standard cluster markers
       calculate_cluster_markers(seurat_obj, label = clust_label, test = "roc")
       calculate_cluster_markers(seurat_obj, label = clust_label, test = "wilcox")
-      # calculate_cluster_markers(seurat_obj, label = clust_label, test = "bimod")
+      calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST")
 
       # calculate and plot pairwise cluster markers (very slow, so skip for high number of clusters)
-      num_clusters = seurat_obj@ident %>% unique() %>% as.character() %>% length()
+      num_clusters = seurat_obj@ident %>% n_distinct()
       if (num_clusters < 20) {
         calculate_cluster_markers(seurat_obj, label = clust_label, test = "wilcox", pairwise = TRUE)
-        calculate_cluster_markers(seurat_obj, label = clust_label, test = "bimod", pairwise = TRUE)
-        # calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST", pairwise = TRUE)
+        calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST", pairwise = TRUE)
       }
 
     }
 
     # cluster stat tables with sample/library info included
-    num_samples = seurat_obj@meta.data %>% pull(orig.ident) %>% unique() %>% as.character() %>% length()
+    num_samples = seurat_obj@meta.data %>% pull(orig.ident) %>% n_distinct()
     if (num_samples > 1) {
-
-      if (opts$identify) {
-
-        clust_label = glue("{clust_label}-per-sample")
-        seurat_obj@meta.data$clust.sample = paste0(seurat_obj@ident[rownames(seurat_obj@meta.data)], "-",
-                                                   seurat_obj@meta.data$orig.ident)
-        seurat_obj = SetAllIdent(seurat_obj, id = "clust.sample")
-        calculate_cluster_stats(seurat_obj, label = clust_label)
-
-      }
 
       # differential expression
       if (opts$de) {
