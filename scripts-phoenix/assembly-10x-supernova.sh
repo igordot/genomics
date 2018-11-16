@@ -17,7 +17,7 @@
 # system-specific settings
 
 # supernova directory
-supernova_version="2.0.1"
+supernova_version="2.1.1"
 supernova_dir="/ifs/home/id460/software/supernova/supernova-${supernova_version}"
 
 

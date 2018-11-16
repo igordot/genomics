@@ -40,9 +40,12 @@ ratio_png = opts$out_png
 if (!file.exists(ratio_txt)) stop("file does not exist: ", ratio_txt)
 
 # load libraries
-suppressPackageStartupMessages(library(magrittr))
-suppressPackageStartupMessages(library(tidyverse))
-suppressPackageStartupMessages(library(karyoploteR))
+suppressPackageStartupMessages({
+  library(magrittr)
+  library(tidyverse)
+  library(karyoploteR)
+  library(scales)
+})
 
 # ploidy
 ploidy = 2
@@ -81,11 +84,11 @@ kp =
   kpAddCytobandsAsLine() %>%
   kpAddChromosomeNames(srt = 45) %>%
   kpPoints(data = ratio_norm, y = ratio_norm$Ratio,
-           cex = 0.3, ymin = 0, ymax = max_cn, col = "darkolivegreen2") %>%
+           cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("darkolivegreen2", 0.3)) %>%
   kpPoints(data = ratio_amp, y = ratio_amp$Ratio,
-           cex = 0.3, ymin = 0, ymax = max_cn, col = "firebrick2") %>%
+           cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("firebrick2", 0.3)) %>%
   kpPoints(data = ratio_del, y = ratio_del$Ratio,
-           cex = 0.3, ymin = 0, ymax = max_cn, col = "royalblue4") %>%
+           cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("royalblue4", 0.3)) %>%
   kpPoints(data = ratio_gr, y = ratio_gr$CopyNumber,
            cex = 0.5, ymin = 0, ymax = max_cn, col = "black") %>%
   kpAddMainTitle(sample_name)
