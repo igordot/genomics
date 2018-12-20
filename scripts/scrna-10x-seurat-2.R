@@ -348,6 +348,13 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
     # load seurat object
     single_obj = readRDS(sample_seurat_rds)
 
+    # clean up object
+    single_obj@var.genes = vector()
+    single_obj@hvg.info = data.frame()
+    single_obj@scale.data = matrix()
+    single_obj@dr = list()
+    single_obj@meta.data = single_obj@meta.data %>% select(-starts_with("res"))
+
     # print single sample sample stats
     sample_name = single_obj@meta.data[1, "orig.ident"]
     message(glue("sample {sample_name} dir: {basename(sample_analysis_dir)}"))
@@ -561,7 +568,7 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
   # for calculated cluster resolutions: remove redundant (same number of clusters), rename, and plot
   res_cols = grep("^res.", colnames(s_obj@meta.data), value = TRUE)
   res_cols = sort(res_cols)
-  res_num_clusters_prev = 2
+  res_num_clusters_prev = 1
   for (res in res_cols) {
 
     # proceed if current resolution has more clusters than previous and less than 80 (limited by the color scheme)
@@ -634,7 +641,7 @@ plot_clusters = function(seurat_obj, resolution, filename_base) {
   message("num clusters: ", num_clusters)
 
   # generate plot if there is a reasonable number of clusters
-  if (num_clusters > 2 && num_clusters < 80) {
+  if (num_clusters > 1 && num_clusters < 80) {
 
     # shuffle cells so they appear randomly and one group does not show up on top
     plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = get_tsne_point_size(s_obj),
