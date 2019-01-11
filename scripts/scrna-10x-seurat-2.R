@@ -41,16 +41,18 @@ load_libraries = function() {
 
   message("\n\n ========== load libraries ========== \n\n")
 
-  suppressPackageStartupMessages(library(magrittr))
-  suppressPackageStartupMessages(library(glue))
-  suppressPackageStartupMessages(library(Seurat))
-  suppressPackageStartupMessages(library(Matrix))
-  suppressPackageStartupMessages(library(tidyverse))
-  suppressPackageStartupMessages(library(cowplot))
-  suppressPackageStartupMessages(library(RColorBrewer))
-  suppressPackageStartupMessages(library(ggsci))
-  suppressPackageStartupMessages(library(eulerr))
-  suppressPackageStartupMessages(library(UpSetR))
+  suppressPackageStartupMessages({
+    library(magrittr)
+    library(glue)
+    library(Seurat)
+    library(Matrix)
+    library(tidyverse)
+    library(cowplot)
+    library(RColorBrewer)
+    library(ggsci)
+    library(eulerr)
+    library(UpSetR)
+  })
 
 }
 
@@ -76,23 +78,26 @@ load_sample_counts_matrix = function(sample_names, sample_dirs) {
     # determine counts matrix directory
     # "filtered_gene_bc_matrices" for single library
     # "filtered_gene_bc_matrices_mex" for aggregated
+    # Cell Ranger 3.0: "genes" has been replaced by "features" to account for feature barcoding
+    # Cell Ranger 3.0: the matrix and barcode files are now gzipped
     data_dir = glue("{sample_dir}/outs")
+    if (!dir.exists(data_dir)) stop(glue("dir {sample_dir} does not contain outs directory"))
     data_dir = list.files(path = data_dir, pattern = "matrix.mtx", full.names = TRUE, recursive = TRUE)
-    data_dir = grep("filtered_gene_bc_matrices", data_dir, value = TRUE)[1]
+    data_dir = str_subset(data_dir, "filtered_.*_bc_matri")[1]
     data_dir = dirname(data_dir)
-    if (!dir.exists(data_dir)) stop(glue("dir {sample_dir} does not exist"))
+    if (!dir.exists(data_dir)) stop(glue("dir {sample_dir} does not contain matrix.mtx"))
 
     message("loading counts matrix dir: ", data_dir)
 
     counts_matrix = Read10X(data_dir)
 
-    message(glue("library {sample_name} genes: {nrow(counts_matrix)}"))
     message(glue("library {sample_name} cells: {ncol(counts_matrix)}"))
+    message(glue("library {sample_name} genes: {nrow(counts_matrix)}"))
     message(" ")
 
     # log to file
-    write(glue("library {sample_name} genes: {nrow(counts_matrix)}"), file = "create.log", append = TRUE)
     write(glue("library {sample_name} cells: {ncol(counts_matrix)}"), file = "create.log", append = TRUE)
+    write(glue("library {sample_name} genes: {nrow(counts_matrix)}"), file = "create.log", append = TRUE)
 
     # clean up counts matrix to make it more readable
     counts_matrix = counts_matrix[sort(rownames(counts_matrix)), ]
@@ -153,11 +158,15 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
   write(glue("input cells: {ncol(counts_matrix)}"), file = "create.log", append = TRUE)
   write(glue("input genes: {nrow(counts_matrix)}"), file = "create.log", append = TRUE)
 
-  # remove genes without counts
-  counts_matrix = counts_matrix[Matrix::rowSums(counts_matrix) >= 5, ]
+  # remove cells with few genes (there is an additional filter in CreateSeuratObject)
+  counts_matrix = counts_matrix[, Matrix::colSums(counts_matrix) >= 250]
+
+  # remove genes without counts (there is an additional filter in CreateSeuratObject)
+  counts_matrix = counts_matrix[Matrix::rowSums(counts_matrix) >= 3, ]
 
   # log to file
-  write(glue("non-zero genes: {nrow(counts_matrix)}"), file = "create.log", append = TRUE)
+  write(glue("detectable cells: {ncol(counts_matrix)}"), file = "create.log", append = TRUE)
+  write(glue("detectable genes: {nrow(counts_matrix)}"), file = "create.log", append = TRUE)
 
   # save counts matrix as a standard text file and gzip
   counts_matrix_filename = "counts.raw.txt"
@@ -167,6 +176,7 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
   # save counts matrix as a csv file (to be consistent with the rest of the tables)
   raw_data = counts_matrix %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(raw_data, path = "counts.raw.csv.gz")
+  rm(raw_data)
 
   message("\n\n ========== create seurat object ========== \n\n")
 
@@ -174,15 +184,16 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
 
     # if name is not set, then it's a manually merged counts matrix
     # save.raw parameter causes errors in v2
-    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 10, min.genes = 300, project = "proj",
+    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 5, min.genes = 250, project = "proj",
                                names.field = 1, names.delim = ":")
+    rm(counts_matrix)
 
   } else if (proj_name == "aggregated") {
 
     # multiple libraries combined using Cell Ranger (cellranger aggr)
 
     # setup taking into consideration aggregated names delimiter
-    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 10, min.genes = 300, project = proj_name,
+    s_obj = CreateSeuratObject(raw.data = counts_matrix, min.cells = 5, min.genes = 250, project = proj_name,
                                names.field = 2, names.delim = "-")
 
     # import cellranger aggr sample sheet
@@ -201,13 +212,13 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
 
   }
 
-  message(glue("imported genes: {nrow(s_obj@data)}"))
   message(glue("imported cells: {ncol(s_obj@data)}"))
+  message(glue("imported genes: {nrow(s_obj@data)}"))
   message(" ")
 
   # log to file
-  write(glue("imported genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
   write(glue("imported cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
+  write(glue("imported genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
 
   # nGene and nUMI are automatically calculated for every object by Seurat
   # calculate the percentage of mitochondrial genes here and store it in percent.mito using the AddMetaData
@@ -222,7 +233,8 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
 
   dist_unfilt_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
                              point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
-  ggsave("qc.distribution.unfiltered.png", plot = dist_unfilt_plot, width = 10, height = 5, units = "in")
+  ggsave("qc.distribution.unfiltered.png", plot = dist_unfilt_plot, width = 10, height = 6, units = "in")
+  Sys.sleep(1)
 
   # check for high mitochondrial percentage or low UMI content
   png("qc.correlations.unfiltered.png", res = 200, width = 10, height = 5, units = "in")
@@ -230,6 +242,7 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
     GenePlot(s_obj, gene1 = "nUMI", gene2 = "percent.mito", cex.use = 0.5, col.use = colors_samples)
     GenePlot(s_obj, gene1 = "nUMI", gene2 = "nGene", cex.use = 0.5, col.use = colors_samples)
   dev.off()
+  Sys.sleep(1)
 
   # check distribution of gene counts and mitochondrial percentage
   low_quantiles = c(0.05, 0.02, 0.01, 0.001)
@@ -288,27 +301,27 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   write(glue("max genes cutoff: {max_genes}"), file = "create.log", append = TRUE)
   write(glue("max mitochondrial percentage cutoff: {max_mt}"), file = "create.log", append = TRUE)
 
-  message("imported genes: ", nrow(s_obj@data))
   message("imported cells: ", ncol(s_obj@data))
+  message("imported genes: ", nrow(s_obj@data))
 
   s_obj = FilterCells(s_obj,
                       subset.names = c("nGene", "percent.mito"),
                       low.thresholds = c(min_genes, -Inf),
                       high.thresholds = c(max_genes, max_mt))
 
-  message("filtered genes: ", nrow(s_obj@data))
   message("filtered cells: ", ncol(s_obj@data))
+  message("filtered genes: ", nrow(s_obj@data))
 
   dist_filt_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
                            point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
-  ggsave("qc.distribution.filtered.png", plot = dist_filt_plot, width = 10, height = 5, units = "in")
+  ggsave("qc.distribution.filtered.png", plot = dist_filt_plot, width = 10, height = 6, units = "in")
 
   # after removing unwanted cells from the dataset, normalize the data
   # LogNormalize:
   # - normalizes the gene expression measurements for each cell by the total expression
   # - multiplies this by a scale factor (10,000 by default)
   # - log-transforms the result
-  s_obj = NormalizeData(s_obj, normalization.method = "LogNormalize", scale.factor = 10000, display.progress = FALSE)
+  s_obj = NormalizeData(s_obj, normalization.method = "LogNormalize", scale.factor = 100000, display.progress = FALSE)
 
   # save counts matrix as a basic gzipped text file
   # object@data stores normalized and log-transformed single cell expression
@@ -318,8 +331,8 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   write_csv(counts_norm, path = "counts.normalized.csv.gz")
 
   # log to file
-  write(glue("filtered genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
   write(glue("filtered cells: {ncol(s_obj@data)}"), file = "create.log", append = TRUE)
+  write(glue("filtered genes: {nrow(s_obj@data)}"), file = "create.log", append = TRUE)
   write(glue("filtered mean num genes: {mean(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
   write(glue("filtered median num genes: {median(s_obj@meta.data$nGene)}"), file = "create.log", append = TRUE)
 
@@ -359,41 +372,67 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
     sample_name = single_obj@meta.data[1, "orig.ident"]
     message(glue("sample {sample_name} dir: {basename(sample_analysis_dir)}"))
     write(glue("sample {sample_name} dir: {basename(sample_analysis_dir)}"), file = "create.log", append = TRUE)
-    message(glue("sample {sample_name} genes: {nrow(single_obj@data)}"))
-    write(glue("sample {sample_name} genes: {nrow(single_obj@data)}"), file = "create.log", append = TRUE)
     message(glue("sample {sample_name} cells: {ncol(single_obj@data)}"))
     write(glue("sample {sample_name} cells: {ncol(single_obj@data)}"), file = "create.log", append = TRUE)
+    message(glue("sample {sample_name} genes: {nrow(single_obj@data)}"))
+    write(glue("sample {sample_name} genes: {nrow(single_obj@data)}"), file = "create.log", append = TRUE)
     message(" ")
 
     # merge samples
     if (i == 1) {
+
+      # copy if first one
       merged_obj = single_obj
+      rm(single_obj)
+
     } else {
-      merged_obj = MergeSeurat(object1 = merged_obj, object2 = single_obj,
-                               project = "proj", names.field = 1, names.delim = ":")
+
+      # require more cells with detected expression of each gene for larger datasets
+      min_cells = 5
+      if (ncol(merged_obj@data) > 10000) min_cells = 10
+
+      # save original normalized data to preserve it (in case custom normalization was used)
+      merged_norm_mat = Seurat:::RowMergeSparseMatrices(merged_obj@data, single_obj@data)
+      # merge objects
+      merged_obj = MergeSeurat(object1 = merged_obj, object2 = single_obj, min.cells = min_cells,
+                               names.field = 1, names.delim = ":", do.normalize = FALSE)
+      # restore original normalized data
+      merged_obj@data = merged_norm_mat[rownames(merged_obj@data), colnames(merged_obj@data)]
+      # remove large objects
+      rm(single_obj)
+      rm(merged_norm_mat)
+
     }
 
   }
 
   # print combined sample stats
-  message(glue("combined genes: {nrow(merged_obj@data)}"))
-  write(glue("combined genes: {nrow(merged_obj@data)}"), file = "create.log", append = TRUE)
   message(glue("combined cells: {ncol(merged_obj@data)}"))
   write(glue("combined cells: {ncol(merged_obj@data)}"), file = "create.log", append = TRUE)
+  message(glue("combined genes: {nrow(merged_obj@data)}"))
+  write(glue("combined genes: {nrow(merged_obj@data)}"), file = "create.log", append = TRUE)
 
   # save raw counts matrix
   counts_raw = merged_obj@raw.data %>% as.matrix() %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(counts_raw, path = "counts.raw.csv.gz")
+  rm(counts_raw)
 
   # save counts matrix as a basic gzipped text file
   # object@data stores normalized and log-transformed single cell expression
   counts_norm = merged_obj@data %>% as.matrix() %>% round(3)
   counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
   write_csv(counts_norm, path = "counts.normalized.csv.gz")
+  rm(counts_norm)
+
+  # create a named color scheme to ensure names and colors are in the proper order
+  sample_names = merged_obj@meta.data$orig.ident %>% as.character() %>% sort() %>% unique()
+  colors_samples_named = colors_samples[1:length(sample_names)]
+  names(colors_samples_named) = sample_names
 
   dist_plot = VlnPlot(merged_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "orig.ident",
-                      point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
-  ggsave("qc.distribution.png", plot = dist_plot, width = 10, height = 5, units = "in")
+                      point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, size.x.use = 12,
+                      do.sort = TRUE, remove.legend = TRUE, cols.use = colors_samples_named)
+  ggsave("qc.distribution.png", plot = dist_plot, width = 15, height = 6, units = "in")
 
   return(merged_obj)
 
@@ -404,7 +443,8 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
 # - PCHeatmap - more supervised, exploring PCs to determine relevant sources of heterogeneity
 # - PCElbowPlot - heuristic that is commonly used and can be calculated instantly
 # - JackStrawPlot - implements a statistical test based on a random null model, but is time-consuming
-calculate_variance = function(seurat_obj) {
+# jackStraw procedure is very slow, so skip for large projects (>10,000 cells)
+calculate_variance = function(seurat_obj, jackstraw_max_cells = 10000) {
 
   s_obj = seurat_obj
 
@@ -412,15 +452,14 @@ calculate_variance = function(seurat_obj) {
 
   # detection of variable genes across the single cells
   # FindVariableGenes:
-  # - calculates the average expression and dispersion for each gene
+  # - calculates the average expression and dispersion (a normalized measure of cell-to-cell variation) for each gene
   # - places these genes into bins
   # - calculates a z-score for dispersion within each bin
-  # FindVariableGenes(object = pbmc, mean.function = ExpMean, dispersion.function = LogVMR,
-  #                   x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+  # default settings: x.low.cutoff = 0.1, x.high.cutoff = 8, y.cutoff = 1, y.high.cutoff = Inf
+  # pbmc3k tutorial: x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5
   png("variance.meanvar.png", res = 200, width = 8, height = 5, units = "in")
-    # more stringent bottom cutoff (still lower than default 0.1)
     s_obj = FindVariableGenes(s_obj, mean.function = ExpMean, dispersion.function = LogVMR,
-                              x.low.cutoff = 0.05, x.high.cutoff = 3, y.cutoff = 0.5, display.progress = FALSE)
+                              x.low.cutoff = 0.05, x.high.cutoff = 5, y.cutoff = 0.5, display.progress = FALSE)
   dev.off()
   message(glue("variable genes: {length(s_obj@var.genes)}"))
 
@@ -436,14 +475,14 @@ calculate_variance = function(seurat_obj) {
   # used for dimensionality reduction and clustering
   # RegressOut function has been deprecated, and replaced with the vars.to.regress argument in ScaleData
   s_obj = ScaleData(s_obj, vars.to.regress = c("nUMI", "percent.mito"),
-                    do.par = TRUE, num.cores = 4, display.progress = FALSE)
+                    do.par = TRUE, num.cores = 4, check.for.norm = FALSE, display.progress = FALSE)
 
   message("\n\n ========== Seurat::PCA() ========== \n\n")
 
   # use fewer PCs for small datasets
   num_pcs = 50
-  if (ncol(s_obj@data) < 100) num_pcs = 15
-  if (ncol(s_obj@data) < 10) num_pcs = 3
+  if (ncol(s_obj@data) < 100) num_pcs = 20
+  if (ncol(s_obj@data) < 25) num_pcs = 5
 
   # PCA on the scaled data
   # PCA calculation stored in object@dr$pca
@@ -480,7 +519,7 @@ calculate_variance = function(seurat_obj) {
   ggsave("variance.pc.elbow.png", plot = plot_elbow, width = 8, height = 5, units = "in")
 
   # resampling test inspired by the jackStraw procedure - very slow, so skip for large projects (>10,000 cells)
-  if (ncol(s_obj@data) < 10000) {
+  if (ncol(s_obj@data) < jackstraw_max_cells) {
 
     message("\n\n ========== Seurat::JackStraw() ========== \n\n")
 
@@ -489,8 +528,8 @@ calculate_variance = function(seurat_obj) {
 
     # compare the distribution of p-values for each PC with a uniform distribution (dashed line)
     # significant PCs will show a strong enrichment of genes with low p-values (solid curve above the dashed line)
-    plot_jackstraw = JackStrawPlot(s_obj, PCs = 1:num_pcs, nCol = 8)
-    ggsave("variance.pc.jackstraw.png", plot = plot_jackstraw, width = 12, height = 8, units = "in")
+    plot_jackstraw = JackStrawPlot(s_obj, PCs = 1:num_pcs, nCol = 10)
+    ggsave("variance.pc.jackstraw.png", plot = plot_jackstraw, width = 15, height = 5, units = "in")
 
   }
 
@@ -1197,8 +1236,9 @@ calculate_cca = function(original_wd, batch_analysis_dirs) {
   write_csv(counts_raw, path = "counts.raw.csv.gz")
 
   dist_plot = VlnPlot(s_obj, c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "batch",
-                      point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, cols.use = colors_samples)
-  ggsave("qc.distribution.batch.png", plot = dist_plot, width = 10, height = 5, units = "in")
+                      point.size.use = 0.1, x.lab.rot = TRUE, size.title.use = 12, size.x.use = 12,
+                      do.sort = TRUE, remove.legend = TRUE, cols.use = colors_samples)
+  ggsave("qc.distribution.batch.png", plot = dist_plot, width = 15, height = 6, units = "in")
 
   message("\n\n ========== Seurat::MetageneBicorPlot() ========== \n\n")
 
@@ -1403,6 +1443,8 @@ if (opts$create) {
 
   # merge multiple samples/libraries based on previous analysis directories
   seurat_obj = combine_seurat_obj(original_wd = original_wd, sample_analysis_dirs = opts$sample_analysis_dir)
+
+  saveRDS(seurat_obj, file = "seurat_obj.rds")
 
   # calculate various variance metrics
   seurat_obj = calculate_variance(seurat_obj)
