@@ -11,12 +11,11 @@ Basic workflow steps:
 Optional steps:
   combine - merge multiple samples/libraries
   integrate - perform integration (batch correction) across multiple sample batches
-  align - perform alignment based on number of CCs (after performing CCA)
   de - differential expression between samples/libraries within clusters
 
 Usage:
   scrna-10x-seurat-3.R create <analysis_dir> <sample_name> <sample_dir> [--min_genes=<n> --max_genes=<n> --mt=<n>]
-  scrna-10x-seurat-3.R cluster <analysis_dir> <num_pcs>
+  scrna-10x-seurat-3.R cluster <analysis_dir> <num_dim>
   scrna-10x-seurat-3.R identify <analysis_dir> <resolution>
   scrna-10x-seurat-3.R combine <analysis_dir> <sample_analysis_dir>...
   scrna-10x-seurat-3.R integrate <analysis_dir> <num_dim> <batch_analysis_dir>...
@@ -767,9 +766,11 @@ calculate_variance = function(seurat_obj, jackstraw_max_cells = 10000) {
   message("\n\n ========== Seurat::DimHeatmap() ========== \n\n")
 
   # PCHeatmap (former) allows for easy exploration of the primary sources of heterogeneity in a dataset
-  png("variance.pca.heatmap.png", res = 300, width = 10, height = 16, units = "in")
-    DimHeatmap(s_obj, reduction = "pca", dims = 1:15, nfeatures = 20, cells = 250, fast = TRUE)
-  dev.off()
+  if (num_pcs > 15) {
+    png("variance.pca.heatmap.png", res = 300, width = 10, height = 16, units = "in")
+      DimHeatmap(s_obj, reduction = "pca", dims = 1:15, nfeatures = 20, cells = 250, fast = TRUE)
+    dev.off()
+  }
 
   message("\n\n ========== Seurat::PCElbowPlot() ========== \n\n")
 
@@ -889,7 +890,7 @@ get_dr_point_size = function(seurat_obj) {
 }
 
 # perform graph-based clustering and tSNE
-calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
+calculate_clusters = function(seurat_obj, num_dim) {
 
   # check if number of dimensions seems reasonable
   if (num_dim < 5) stop("too few dims: ", num_dim)
@@ -901,7 +902,7 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
 
   # use tSNE as a tool to visualize, not for clustering directly on tSNE components
   # cells within the graph-based clusters determined above should co-localize on the tSNE plot
-  s_obj = RunTSNE(s_obj, reduction = reduction_type, dims.use = 1:num_dim)
+  s_obj = RunTSNE(s_obj, reduction = "pca", dims.use = 1:num_dim)
 
   # reduce point size for larger datasets
   dr_pt_size = get_dr_point_size(s_obj)
@@ -933,11 +934,11 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
 
   message("\n\n ========== Seurat::FindNeighbors() ========== \n\n")
 
-  message("reduction type: ", reduction_type)
+  message("assay: ", DefaultAssay(s_obj))
   message("num dims: ", num_dim)
 
   # construct a Shared Nearest Neighbor (SNN) Graph for a given dataset
-  s_obj = FindNeighbors(s_obj, reduction = reduction_type, dims = 1:num_dim, graph.name = "snn", compute.SNN = TRUE, force.recalc = TRUE)
+  s_obj = FindNeighbors(s_obj, dims = 1:num_dim, graph.name = "snn", compute.SNN = TRUE, force.recalc = TRUE)
 
   message("\n\n ========== Seurat::FindClusters() ========== \n\n")
 
@@ -992,7 +993,7 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
 
       # plot file name
       res_str = gsub("\\.", "", res)
-      dr_filename = glue("{clusters_dir}/dr.{reduction_type}.{num_dim}.{res_str}.clust{res_num_clusters_cur}")
+      dr_filename = glue("{clusters_dir}/dr.{DefaultAssay(s_obj)}.{num_dim}.{res_str}.clust{res_num_clusters_cur}")
 
       s_obj = plot_clusters(seurat_obj = s_obj, resolution = res_val, filename_base = dr_filename)
 
@@ -1610,7 +1611,7 @@ if (opts$create) {
     message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
 
     # determine clusters
-    seurat_obj = calculate_clusters(seurat_obj, num_dim = as.integer(opts$num_pcs), reduction_type = "pca")
+    seurat_obj = calculate_clusters(seurat_obj, num_dim = as.integer(opts$num_dim))
     saveRDS(seurat_obj, file = "seurat_obj.rds")
 
   }
