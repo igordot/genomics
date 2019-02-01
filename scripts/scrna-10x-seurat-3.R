@@ -45,6 +45,7 @@ load_libraries = function() {
     library(future)
     library(Matrix)
     library(tidyverse)
+    library(data.table)
     library(cowplot)
     library(scales)
     library(RColorBrewer)
@@ -477,8 +478,10 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
   write(glue("combined unfiltered genes: {nrow(merged_obj)}"), file = "create.log", append = TRUE)
 
   # filter poorly expressed genes (detected in less than 10 cells)
-  filtered_genes = Matrix::rowSums(GetAssayData(merged_obj, slot = "counts") > 0)
-  filtered_genes = filtered_genes[filtered_genes >= 10] %>% names() %>% sort()
+  filtered_genes = Matrix::rowSums(GetAssayData(merged_obj, assay = "RNA", slot = "counts") > 0)
+  min_cells = 10
+  if (ncol(merged_obj) > 100000) { min_cells = 50 }
+  filtered_genes = filtered_genes[filtered_genes >= min_cells] %>% names() %>% sort()
   merged_obj = subset(merged_obj, features = filtered_genes)
 
   # print combined sample stats
@@ -487,17 +490,35 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
   message(glue("combined genes: {nrow(merged_obj)}"))
   write(glue("combined genes: {nrow(merged_obj)}"), file = "create.log", append = TRUE)
 
-  # save raw counts matrix
-  counts_raw = GetAssayData(merged_obj, slot = "counts") %>% as.matrix()
-  counts_raw = counts_raw %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
-  write_csv(counts_raw, path = "counts.raw.csv.gz")
-  rm(counts_raw)
+  # print gene/cell minimum cutoffs
+  min_cells = Matrix::rowSums(GetAssayData(merged_obj, assay = "RNA", slot = "counts") > 0) %>% min()
+  min_genes = Matrix::colSums(GetAssayData(merged_obj, assay = "RNA", slot = "counts") > 0) %>% min()
+  message(glue("min cells per gene: {min_cells}"))
+  write(glue("min cells per gene: {min_cells}"), file = "create.log", append = TRUE)
+  message(glue("min genes per cell: {min_genes}"))
+  write(glue("min genes per cell: {min_genes}"), file = "create.log", append = TRUE)
 
-  # save counts matrix as a basic gzipped text file
-  counts_norm = GetAssayData(merged_obj) %>% as.matrix() %>% round(3)
-  counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
-  write_csv(counts_norm, path = "counts.normalized.csv.gz")
-  rm(counts_norm)
+  # check that the full counts table is small enough to fit into an R matrix (max around 100k x 21k)
+  num_matrix_elements = GetAssayData(merged_obj, assay = "RNA", slot = "counts") %>% length()
+  if (num_matrix_elements < 2^31) {
+
+    # save raw counts matrix
+    counts_raw = GetAssayData(merged_obj, assay = "RNA", slot = "counts") %>% as.matrix()
+    counts_raw = counts_raw %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+    # write_csv(counts_raw, path = "counts.raw.csv.gz")
+    fwrite(counts_raw, file = "counts.raw.csv", sep = ",")
+    R.utils::gzip("counts.raw.csv")
+    rm(counts_raw)
+
+    # save counts matrix as a basic gzipped text file
+    counts_norm = GetAssayData(merged_obj, assay = "RNA") %>% as.matrix() %>% round(3)
+    counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+    # write_csv(counts_norm, path = "counts.normalized.csv.gz")
+    fwrite(counts_norm, file = "counts.normalized.csv", sep = ",")
+    R.utils::gzip("counts.normalized.csv")
+    rm(counts_norm)
+
+  }
 
   # create a named color scheme to ensure names and colors are in the proper order
   sample_names = merged_obj$orig.ident %>% as.character() %>% sort() %>% unique()
@@ -534,7 +555,7 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
       scale_y_continuous(labels = comma) +
       vln_theme
     dist_plot = plot_grid(dist_nft_plot, dist_nct_plot, dist_pmt_plot, ncol = 3)
-    ggsave("qc.distribution.png", plot = dist_plot, width = 15, height = 6, units = "in")
+    ggsave("qc.distribution.png", plot = dist_plot, width = 20, height = 6, units = "in")
   })
   Sys.sleep(1)
 
@@ -642,32 +663,52 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
 
   # filter poorly expressed genes (detected in less than 10 cells)
   filtered_genes = Matrix::rowSums(GetAssayData(integrated_obj, assay = "RNA", slot = "counts") > 0)
-  filtered_genes = filtered_genes[filtered_genes >= 10] %>% names() %>% sort()
+  min_cells = 10
+  if (ncol(integrated_obj) > 100000) { min_cells = 50 }
+  filtered_genes = filtered_genes[filtered_genes >= min_cells] %>% names() %>% sort()
   integrated_obj = subset(integrated_obj, features = filtered_genes)
 
   # print integrated sample stats
   message(glue("integrated cells: {ncol(integrated_obj)}"))
   write(glue("integrated cells: {ncol(integrated_obj)}"), file = "create.log", append = TRUE)
-  message(glue("integrated genes: {nrow(integrated_obj)}"))
-  write(glue("integrated genes: {nrow(integrated_obj)}"), file = "create.log", append = TRUE)
+  message(glue("integrated genes: {nrow(GetAssayData(integrated_obj, assay = 'RNA'))}"))
+  write(glue("integrated genes: {nrow(GetAssayData(integrated_obj, assay = 'RNA'))}"), file = "create.log", append = TRUE)
 
-  # save raw counts matrix
-  counts_raw = GetAssayData(integrated_obj, assay = "RNA", slot = "counts") %>% as.matrix()
-  counts_raw = counts_raw %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
-  write_csv(counts_raw, path = "counts.raw.csv.gz")
-  rm(counts_raw)
+  # print gene/cell minumum cutoffs
+  min_cells = Matrix::rowSums(GetAssayData(integrated_obj, assay = "RNA", slot = "counts") > 0) %>% min()
+  min_genes = Matrix::colSums(GetAssayData(integrated_obj, assay = "RNA", slot = "counts") > 0) %>% min()
+  message(glue("min cells per gene: {min_cells}"))
+  write(glue("min cells per gene: {min_cells}"), file = "create.log", append = TRUE)
+  message(glue("min genes per cell: {min_genes}"))
+  write(glue("min genes per cell: {min_genes}"), file = "create.log", append = TRUE)
 
-  # save normalized counts matrix
-  counts_norm = GetAssayData(integrated_obj, assay = "RNA") %>% as.matrix() %>% round(3)
-  counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
-  write_csv(counts_norm, path = "counts.normalized.csv.gz")
-  rm(counts_norm)
+  # check that the full counts table is small enough to fit into an R matrix (max around 100k x 21k)
+  num_matrix_elements = GetAssayData(integrated_obj, assay = "RNA", slot = "counts") %>% length()
+  if (num_matrix_elements < 2^31) {
 
-  # save integrated counts matrix
-  # counts_int = GetAssayData(integrated_obj, assay = "integrated") %>% as.matrix() %>% round(3)
-  # counts_int = counts_int %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
-  # write_csv(counts_int, path = "counts.integrated.csv.gz")
-  # rm(counts_int)
+    # save raw counts matrix
+    counts_raw = GetAssayData(integrated_obj, assay = "RNA", slot = "counts") %>% as.matrix()
+    counts_raw = counts_raw %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+    # write_csv(counts_raw, path = "counts.raw.csv.gz")
+    fwrite(counts_raw, file = "counts.raw.csv", sep = ",")
+    R.utils::gzip("counts.raw.csv")
+    rm(counts_raw)
+
+    # save normalized counts matrix
+    counts_norm = GetAssayData(integrated_obj, assay = "RNA") %>% as.matrix() %>% round(3)
+    counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+    # write_csv(counts_norm, path = "counts.normalized.csv.gz")
+    fwrite(counts_norm, file = "counts.normalized.csv", sep = ",")
+    R.utils::gzip("counts.normalized.csv")
+    rm(counts_norm)
+
+    # save integrated counts matrix
+    # counts_int = GetAssayData(integrated_obj, assay = "integrated") %>% as.matrix() %>% round(3)
+    # counts_int = counts_int %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+    # write_csv(counts_int, path = "counts.integrated.csv.gz")
+    # rm(counts_int)
+
+  }
 
   vln_theme =
     theme(
@@ -699,7 +740,7 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
       scale_y_continuous(labels = comma) +
       vln_theme
     dist_plot = plot_grid(dist_nft_plot, dist_nct_plot, dist_pmt_plot, ncol = 3)
-    ggsave("qc.distribution.png", plot = dist_plot, width = 15, height = 6, units = "in")
+    ggsave("qc.distribution.png", plot = dist_plot, width = 20, height = 6, units = "in")
   })
   Sys.sleep(1)
 
@@ -828,7 +869,7 @@ calculate_variance_integrated = function(seurat_obj, num_dim) {
       pt.size = 0.5, cols = colors_samples
     ) +
     theme(aspect.ratio = 1)
-  ggsave("variance.pca.png", plot = pca_plot, width = 8, height = 6, units = "in")
+  ggsave("variance.pca.png", plot = pca_plot, width = 10, height = 6, units = "in")
 
   message("\n\n ========== Seurat::RunTSNE() ========== \n\n")
 
@@ -844,9 +885,9 @@ calculate_variance_integrated = function(seurat_obj, num_dim) {
   plot_tsne =
     DimPlot(s_obj, reduction = "tsne", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
     theme(aspect.ratio = 1)
-  ggsave(glue("dr.tsne.{num_dim}.sample.png"), plot = plot_tsne, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.tsne.{num_dim}.sample.png"), plot = plot_tsne, width = 10, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("dr.tsne.{num_dim}.sample.pdf"), plot = plot_tsne, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.tsne.{num_dim}.sample.pdf"), plot = plot_tsne, width = 10, height = 6, units = "in")
   Sys.sleep(1)
 
   message("\n\n ========== Seurat::RunUMAP() ========== \n\n")
@@ -859,9 +900,9 @@ calculate_variance_integrated = function(seurat_obj, num_dim) {
   plot_umap =
     DimPlot(s_obj, reduction = "umap", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
     theme(aspect.ratio = 1)
-  ggsave(glue("dr.umap.{num_dim}.sample.png"), plot = plot_umap, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.umap.{num_dim}.sample.png"), plot = plot_umap, width = 10, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("dr.umap.{num_dim}.sample.pdf"), plot = plot_umap, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.umap.{num_dim}.sample.pdf"), plot = plot_umap, width = 10, height = 6, units = "in")
   Sys.sleep(1)
 
   # compile all cell metadata into a single table
@@ -912,9 +953,9 @@ calculate_clusters = function(seurat_obj, num_dim) {
   plot_tsne =
     DimPlot(s_obj, reduction = "tsne", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
     theme(aspect.ratio = 1)
-  ggsave(glue("dr.tsne.{num_dim}.sample.png"), plot = plot_tsne, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.tsne.{num_dim}.sample.png"), plot = plot_tsne, width = 10, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("dr.tsne.{num_dim}.sample.pdf"), plot = plot_tsne, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.tsne.{num_dim}.sample.pdf"), plot = plot_tsne, width = 10, height = 6, units = "in")
   Sys.sleep(1)
 
   message("\n\n ========== Seurat::RunUMAP() ========== \n\n")
@@ -927,9 +968,9 @@ calculate_clusters = function(seurat_obj, num_dim) {
   plot_umap =
     DimPlot(s_obj, reduction = "umap", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
     theme(aspect.ratio = 1)
-  ggsave(glue("dr.umap.{num_dim}.sample.png"), plot = plot_umap, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.umap.{num_dim}.sample.png"), plot = plot_umap, width = 10, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("dr.umap.{num_dim}.sample.pdf"), plot = plot_umap, width = 8, height = 6, units = "in")
+  ggsave(glue("dr.umap.{num_dim}.sample.pdf"), plot = plot_umap, width = 10, height = 6, units = "in")
   Sys.sleep(1)
 
   message("\n\n ========== Seurat::FindNeighbors() ========== \n\n")

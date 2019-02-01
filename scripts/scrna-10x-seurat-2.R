@@ -595,9 +595,10 @@ calculate_clusters = function(seurat_obj, num_dim, reduction_type = "pca") {
   s_obj = SetAllIdent(s_obj, id = "orig.ident")
   plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = tsne_pt_size,
                        colors.use = colors_samples, do.return = TRUE)
-  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.png"), plot = plot_tsne, width = 7.5, height = 6, units = "in")
+  plot_tsne = plot_tsne + theme(aspect.ratio = 1)
+  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.png"), plot = plot_tsne, width = 8, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.pdf"), plot = plot_tsne, width = 7.5, height = 6, units = "in")
+  ggsave(glue("tsne.{reduction_type}.{num_dim}.sample.pdf"), plot = plot_tsne, width = 8, height = 6, units = "in")
   Sys.sleep(1)
 
   # create a separate sub-directory for cluster resolution plots
@@ -685,9 +686,10 @@ plot_clusters = function(seurat_obj, resolution, filename_base) {
     # shuffle cells so they appear randomly and one group does not show up on top
     plot_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), pt.size = get_tsne_point_size(s_obj),
                          colors.use = colors_clusters, do.return = TRUE)
-    ggsave(glue("{filename_base}.png"), plot = plot_tsne, width = 7, height = 6, units = "in")
+    plot_tsne = plot_tsne + theme(aspect.ratio = 1)
+    ggsave(glue("{filename_base}.png"), plot = plot_tsne, width = 8, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("{filename_base}.pdf"), plot = plot_tsne, width = 7, height = 6, units = "in")
+    ggsave(glue("{filename_base}.pdf"), plot = plot_tsne, width = 8, height = 6, units = "in")
     Sys.sleep(1)
 
     if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
@@ -1323,18 +1325,20 @@ align_cca = function(seurat_obj, num_ccs) {
     s_obj = RunTSNE(object = s_obj, reduction.use = "pca", dims.use = 1:num_pcs, do.fast = TRUE)
     plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
                              pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
-    ggsave(glue("tsne.pca.{num_pcs}.batch.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+    plot_pca_tsne = plot_pca_tsne + theme(aspect.ratio = 1)
+    ggsave(glue("tsne.pca.{num_pcs}.batch.png"), plot = plot_pca_tsne, width = 8, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+    ggsave(glue("tsne.pca.{num_pcs}.batch.pdf"), plot = plot_pca_tsne, width = 8, height = 6, units = "in")
     Sys.sleep(1)
 
     # plot original samples/libraries if each batch does not correspond to a single sample/library
     if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
       plot_pca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
                                pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
-      ggsave(glue("tsne.pca.{num_pcs}.sample.png"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+      plot_pca_tsne = plot_pca_tsne + theme(aspect.ratio = 1)
+      ggsave(glue("tsne.pca.{num_pcs}.sample.png"), plot = plot_pca_tsne, width = 8, height = 6, units = "in")
       Sys.sleep(1)
-      ggsave(glue("tsne.pca.{num_pcs}.sample.pdf"), plot = plot_pca_tsne, width = 7.5, height = 6, units = "in")
+      ggsave(glue("tsne.pca.{num_pcs}.sample.pdf"), plot = plot_pca_tsne, width = 8, height = 6, units = "in")
       Sys.sleep(1)
     }
 
@@ -1344,18 +1348,20 @@ align_cca = function(seurat_obj, num_ccs) {
   s_obj = RunTSNE(object = s_obj, reduction.use = "cca.aligned", dims.use = 1:num_ccs, do.fast = TRUE)
   plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "batch",
                            pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
-  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.png"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
+  plot_cca_tsne = plot_cca_tsne + theme(aspect.ratio = 1)
+  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.png"), plot = plot_cca_tsne, width = 8, height = 6, units = "in")
   Sys.sleep(1)
-  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.pdf"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
+  ggsave(glue("tsne.cca.aligned.{num_ccs}.batch.pdf"), plot = plot_cca_tsne, width = 8, height = 6, units = "in")
   Sys.sleep(1)
 
   # plot original samples/libraries if each batch does not correspond to a single sample/library
   if (length(unique(s_obj@meta.data$orig.ident)) > length(unique(s_obj@meta.data$batch))) {
     plot_cca_tsne = TSNEPlot(s_obj, cells.use = sample(colnames(s_obj@data)), group.by = "orig.ident",
                              pt.size = get_tsne_point_size(s_obj), colors.use = colors_samples, do.return = TRUE)
-    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.png"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
+    plot_cca_tsne = plot_cca_tsne + theme(aspect.ratio = 1)
+    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.png"), plot = plot_cca_tsne, width = 8, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.pdf"), plot = plot_cca_tsne, width = 7.5, height = 6, units = "in")
+    ggsave(glue("tsne.cca.aligned.{num_ccs}.sample.pdf"), plot = plot_cca_tsne, width = 8, height = 6, units = "in")
     Sys.sleep(1)
   }
 
