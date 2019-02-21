@@ -8,8 +8,8 @@ Basic workflow steps:
   2 - cluster - perform clustering based on number of PCs
   3 - identify - identify clusters based on specified clustering/resolution (higher resolution for more clusters)
 
-Optional steps:
-  combine - merge multiple samples/libraries
+Additional optional steps:
+  combine - merge multiple samples/libraries (no batch correction)
   integrate - perform integration (batch correction) across multiple sample batches
   de - differential expression between samples/libraries within clusters
 
@@ -1157,6 +1157,9 @@ plot_genes = function(seurat_obj, genes, name) {
   # color gradient for FeaturePlot-based plots
   gradient_colors = c("gray85", "red2")
 
+  # switch to "RNA" assay from potentially "integrated"
+  DefaultAssay(seurat_obj) = "RNA"
+
   # tSNE plots color-coded by expression level (should be square to match the original tSNE plots)
   feat_plot =
     FeaturePlot(
@@ -1182,7 +1185,7 @@ plot_genes = function(seurat_obj, genes, name) {
 
   # bar plots
   # create a named color scheme to ensure names and colors are in the proper order
-  clust_names = levels(Idents(seurat_obj))
+  clust_names = levels(seurat_obj)
   color_scheme_named = colors_clusters[1:length(clust_names)]
   names(color_scheme_named) = clust_names
   barplot_plot = ggplot(cluster_avg_exp_long, aes(x = cluster, y = avg_exp, fill = cluster)) +
@@ -1202,7 +1205,7 @@ calculate_cluster_stats = function(seurat_obj, label) {
 
   message("\n\n ========== calculate cluster stats ========== \n\n")
 
-  message("cluster names: ", str_c(levels(Idents(seurat_obj)), collapse = ", "))
+  message("cluster names: ", str_c(levels(seurat_obj), collapse = ", "))
 
   # compile relevant cell metadata into a single table
   seurat_obj$cluster = Idents(seurat_obj)
@@ -1444,74 +1447,85 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 }
 
 # calculate differentially expressed genes within each cluster
-calculate_cluster_de_genes = function(seurat_obj, label, test) {
+calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig.ident") {
 
   message("\n\n ========== calculate cluster DE genes ========== \n\n")
 
+  # scale data for heatmap
+  if (nrow(GetAssayData(seurat_obj, assay = "RNA", slot = "scale.data")) < 100) {
+    seurat_obj = ScaleData(seurat_obj, assay = "RNA", vars.to.regress = c("num_UMIs", "pct_mito"))
+  }
+
   # create a separate sub-directory for differential expression results
-  de_dir = "diff-expression"
+  de_dir = glue("diff-expression-{group_var}")
   if (!dir.exists(de_dir)) dir.create(de_dir)
 
   # common settings
   num_de_genes = 50
 
-  # cluster names
-  clusters = seurat_obj@ident %>% as.character() %>% unique() %>% sort()
+  # results table
+  de_all_genes_tbl = tibble()
 
   # get DE genes for each cluster
+  clusters = levels(seurat_obj)
   for (clust_name in clusters) {
 
     message(glue("calculating DE genes for cluster {clust_name}"))
 
     # subset to the specific cluster
-    clust_obj = SubsetData(seurat_obj, ident.use = clust_name)
+    clust_obj = subset(seurat_obj, idents = clust_name)
 
-    # revert back to original sample/library labels
-    clust_obj = SetAllIdent(clust_obj, id = "orig.ident")
+    # revert back to the grouping variable sample/library labels
+    Idents(clust_obj) = group_var
 
-    message("cluster cells: ", ncol(clust_obj@data))
-    message("cluster groups: ", paste(levels(clust_obj@ident), collapse = ", "))
+    message("cluster cells: ", ncol(clust_obj))
+    message("cluster groups: ", paste(levels(clust_obj), collapse = ", "))
 
-    # continue if cluster has multiple groups and more than 100 cells and more than 10 cells per group
-    if (length(unique(clust_obj@ident)) > 1 && ncol(clust_obj@data) > 50 && min(table(clust_obj@ident)) > 10) {
+    # continue if cluster has multiple groups and more than 25 cells and more than 10 cells per group
+    if (n_distinct(Idents(clust_obj)) > 1 && ncol(clust_obj) > 25 && min(table(Idents(clust_obj))) > 10) {
 
       # iterate through sample/library combinations (relevant if more than two)
-      group_combinations = combn(levels(clust_obj@ident), m = 2, simplify = TRUE)
+      group_combinations = combn(levels(clust_obj), m = 2, simplify = TRUE)
       for (combination_num in 1:ncol(group_combinations)) {
 
         # determine combination
-        s1 = group_combinations[1, combination_num]
-        s2 = group_combinations[2, combination_num]
-        comparison_label = glue("{s1}-vs-{s2}")
-        message(glue("comparison: {clust_name} {comparison_label}"))
+        g1 = group_combinations[1, combination_num]
+        g2 = group_combinations[2, combination_num]
+        comparison_label = glue("{g1}-vs-{g2}")
+        message(glue("comparison: {clust_name} {g1} vs {g2}"))
 
         filename_label = glue("{de_dir}/de.{label}-{clust_name}.{comparison_label}.{test}")
 
         # find differentially expressed genes (default Wilcoxon rank sum test)
-        de_genes = FindMarkers(clust_obj, ident.1 = s1, ident.2 = s2, test.use = test,
-                               logfc.threshold = log(1.1), min.pct = 0.1,
-                               only.pos = FALSE, print.bar = FALSE)
+        de_genes = FindMarkers(clust_obj, ident.1 = g1, ident.2 = g2, assay = "RNA",
+                               test.use = test, logfc.threshold = log(1), min.pct = 0.1, only.pos = FALSE,
+                               print.bar = FALSE)
 
-        # do some light filtering and clean up
-        de_genes = de_genes %>%
+        # perform some light filtering and clean up
+        de_genes =
+          de_genes %>%
           rownames_to_column("gene") %>%
-          select(gene, avg_logFC, p_val, p_val_adj) %>%
-          filter(p_val < 0.01) %>%
-          mutate(avg_logFC = round(avg_logFC, 3)) %>%
+          mutate(cluster = clust_name, group1 = g1, group2 = g2, de_test = test) %>%
+          select(cluster, group1, group2, de_test, gene, avg_logFC, p_val, p_val_adj) %>%
+          mutate(
+            avg_logFC = round(avg_logFC, 3),
+            p_val = if_else(p_val < 0.00001, p_val, round(p_val, 5)),
+            p_val_adj = if_else(p_val_adj < 0.00001, p_val_adj, round(p_val_adj, 5))
+          ) %>%
           arrange(p_val_adj, p_val)
 
-        message(glue("num DE genes (p<0.01): {nrow(de_genes)}"))
+        message(glue("{comparison_label} num genes: {nrow(de_genes)}"))
 
         # save stats table
-        write_excel_csv(de_genes, path = glue("{filename_label}.stats.csv"))
+        write_excel_csv(de_genes, path = glue("{filename_label}.csv"))
 
-        # heatmap of top genes if any significant genes are present
+        # add cluster genes to all genes
+        de_all_genes_tbl = bind_rows(de_all_genes_tbl, de_genes)
+
+        # heatmap of top genes
         if (nrow(de_genes) > 5) {
           top_de_genes = de_genes %>% top_n(num_de_genes, -p_val_adj) %>% arrange(avg_logFC) %>% pull(gene)
-          plot_hm = DoHeatmap(clust_obj, genes.use = top_de_genes,
-                              use.scaled = TRUE, remove.key = FALSE, slim.col.label = TRUE,
-                              col.low = "lemonchiffon", col.mid = "gold2", col.high = "red3",
-                              cex.row = 10, cex.col = 0.5, group.cex = 15, disp.min = -2, disp.max = 2)
+          plot_hm = DoHeatmap(clust_obj, features = top_de_genes, assay = "RNA", slot = "scale.data")
           heatmap_prefix = glue("{filename_label}.heatmap.top{num_de_genes}")
           ggsave(glue("{heatmap_prefix}.png"), plot = plot_hm, width = 15, height = 10, units = "in")
           Sys.sleep(1)
@@ -1530,6 +1544,11 @@ calculate_cluster_de_genes = function(seurat_obj, label, test) {
     message(" ")
 
   }
+
+  # save stats table
+  write_excel_csv(de_all_genes_tbl, path = glue("{de_dir}/de.{label}.{group_var}.{test}.all.csv"))
+  de_all_genes_tbl = de_all_genes_tbl %>% filter(p_val_adj < 0.01)
+  write_excel_csv(de_all_genes_tbl, path = glue("{de_dir}/de.{label}.{group_var}.{test}.sig.csv"))
 
 }
 
@@ -1697,21 +1716,14 @@ if (opts$create) {
 
     }
 
-    # check if there are multiple samples for differential expression analysis
-    num_samples = seurat_obj$orig.ident %>% n_distinct()
-    if (num_samples > 1) {
+    # differential expression
+    if (opts$de) {
 
-      # differential expression
-      if (opts$de) {
+        analysis_step = "diff"
+        message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
 
-          analysis_step = "diff"
-          message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
-
-          calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "wilcox")
-          calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "bimod")
-          calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "MAST")
-
-      }
+        calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "wilcox")
+        calculate_cluster_de_genes(seurat_obj, label = clust_label, test = "MAST")
 
     }
 

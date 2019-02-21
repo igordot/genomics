@@ -1074,18 +1074,20 @@ calculate_cluster_de_genes = function(seurat_obj, label, test) {
 
         # find differentially expressed genes (default Wilcoxon rank sum test)
         de_genes = FindMarkers(clust_obj, ident.1 = s1, ident.2 = s2, test.use = test,
-                               logfc.threshold = log(1.1), min.pct = 0.1,
+                               logfc.threshold = log(1), min.pct = 0.1,
                                only.pos = FALSE, print.bar = FALSE)
 
         # do some light filtering and clean up
         de_genes = de_genes %>%
           rownames_to_column("gene") %>%
-          select(gene, avg_logFC, p_val, p_val_adj) %>%
-          filter(p_val < 0.01) %>%
+          mutate(cluster = clust_name, sample1 = s1, sample2 = s2, test = test) %>%
+          select(cluster, sample1, sample2, test, gene, avg_logFC, p_val, p_val_adj) %>%
+          # filter(p_val < 0.01) %>%
           mutate(avg_logFC = round(avg_logFC, 3)) %>%
           arrange(p_val_adj, p_val)
 
-        message(glue("num DE genes (p<0.01): {nrow(de_genes)}"))
+        # message(glue("num DE genes (p<0.01): {nrow(de_genes)}"))
+        message(glue("{comparison_label} num genes: {nrow(de_genes)}"))
 
         # save stats table
         write_excel_csv(de_genes, path = glue("{filename_label}.stats.csv"))
