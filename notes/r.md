@@ -15,6 +15,14 @@ Get version of package:
 packageVersion("package")
 ```
 
+Check that all installed packages can be loaded:
+```r
+for (p in rownames(installed.packages())) {
+  message(p)
+  suppressPackageStartupMessages(library(p, character.only = TRUE))
+}
+```
+
 Working with methods:
 ```r
 # prints source code for method

@@ -931,7 +931,8 @@ get_dr_point_size = function(seurat_obj) {
 }
 
 # perform graph-based clustering and tSNE
-calculate_clusters = function(seurat_obj, num_dim) {
+# specify neighbors for UMAP and FindNeighbors (default is 30 in Seurat 2 and 3 pre-release)
+calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   # check if number of dimensions seems reasonable
   if (num_dim < 5) stop("too few dims: ", num_dim)
@@ -961,7 +962,7 @@ calculate_clusters = function(seurat_obj, num_dim) {
   message("\n\n ========== Seurat::RunUMAP() ========== \n\n")
 
   # runs the Uniform Manifold Approximation and Projection (UMAP) dimensional reduction technique
-  s_obj = RunUMAP(s_obj, reduction = "pca", dims = 1:num_dim, verbose = FALSE)
+  s_obj = RunUMAP(s_obj, reduction = "pca", dims = 1:num_dim, n.neighbors = num_neighbors, verbose = FALSE)
 
   # tSNE using original sample names (shuffle cells so any one group does not appear overrepresented due to ordering)
   s_obj = set_identity(seurat_obj = s_obj, group_var = "orig.ident")
@@ -979,7 +980,11 @@ calculate_clusters = function(seurat_obj, num_dim) {
   message("num dims: ", num_dim)
 
   # construct a Shared Nearest Neighbor (SNN) Graph for a given dataset
-  s_obj = FindNeighbors(s_obj, dims = 1:num_dim, graph.name = "snn", compute.SNN = TRUE, force.recalc = TRUE)
+  s_obj =
+    FindNeighbors(
+      s_obj, dims = 1:num_dim, k.param = num_neighbors,
+      graph.name = "snn", compute.SNN = TRUE, force.recalc = TRUE
+    )
 
   message("\n\n ========== Seurat::FindClusters() ========== \n\n")
 
@@ -1451,11 +1456,6 @@ calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig
 
   message("\n\n ========== calculate cluster DE genes ========== \n\n")
 
-  # scale data for heatmap
-  if (nrow(GetAssayData(seurat_obj, assay = "RNA", slot = "scale.data")) < 100) {
-    seurat_obj = ScaleData(seurat_obj, assay = "RNA", vars.to.regress = c("num_UMIs", "pct_mito"))
-  }
-
   # create a separate sub-directory for differential expression results
   de_dir = glue("diff-expression-{group_var}")
   if (!dir.exists(de_dir)) dir.create(de_dir)
@@ -1481,8 +1481,11 @@ calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig
     message("cluster cells: ", ncol(clust_obj))
     message("cluster groups: ", paste(levels(clust_obj), collapse = ", "))
 
-    # continue if cluster has multiple groups and more than 25 cells and more than 10 cells per group
-    if (n_distinct(Idents(clust_obj)) > 1 && ncol(clust_obj) > 25 && min(table(Idents(clust_obj))) > 10) {
+    # continue if cluster has multiple groups and more than 10 cells in each group
+    if (n_distinct(Idents(clust_obj)) > 1 && min(table(Idents(clust_obj))) > 10) {
+
+      # scale data for heatmap
+      clust_obj = ScaleData(clust_obj, assay = "RNA", vars.to.regress = c("num_UMIs", "pct_mito"))
 
       # iterate through sample/library combinations (relevant if more than two)
       group_combinations = combn(levels(clust_obj), m = 2, simplify = TRUE)
