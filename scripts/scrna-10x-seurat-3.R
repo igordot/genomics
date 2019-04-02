@@ -1173,7 +1173,16 @@ plot_genes = function(seurat_obj, genes, name) {
     )
   ggsave(glue("{name}.tsne.png"), plot = feat_plot, width = 16, height = 10, units = "in")
   ggsave(glue("{name}.tsne.pdf"), plot = feat_plot, width = 16, height = 10, units = "in")
-
+  
+  # UMAP plots color-coded by expression level (should be square to match the original tSNE plots)
+  feat_plot =
+    FeaturePlot(
+      seurat_obj, features = genes, reduction = "umap", cells = sample(colnames(seurat_obj)),
+      pt.size = 0.5, cols = gradient_colors, ncol = 4
+    )
+  ggsave(glue("{name}.umap.png"), plot = feat_plot, width = 16, height = 10, units = "in")
+  ggsave(glue("{name}.umap.pdf"), plot = feat_plot, width = 16, height = 10, units = "in")
+  
   # dot plot visualization
   dot_plot = DotPlot(seurat_obj, features = genes, dot.scale = 12, cols = gradient_colors)
   ggsave(glue("{name}.dotplot.png"), plot = dot_plot, width = 20, height = 8, units = "in")
