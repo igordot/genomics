@@ -9,6 +9,7 @@
 | subread featureCounts `-s`           | `1`                                  | `2`                                  |
 | RSEM `--forward-prob`                | `1`                                  | `0`                                  |
 | Salmon/Sailfish `--libType`          | `SF`/`ISF`                           | `SR`/`ISR`                           |
+| HISAT2 `--rna-strandness`            | `FR` (`F` for single-end)            | `RF` (`R` for single-end)            |
 | Library Kit                          | Illumina ScriptSeq                   | Illumina TruSeq Stranded Total RNA   |
 
 ***
