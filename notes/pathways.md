@@ -21,3 +21,4 @@ Graphical point-and-click pathway analysis tools (no coding required)
 |[ToppGene](https://toppgene.cchmc.org/)|web-based|
 |[g:Profiler](http://biit.cs.ut.ee/gprofiler/)|web-based|
 |[ShinyGO](http://bioinformatics.sdstate.edu/go/)|web-based|
+|[Metascape](http://metascape.org/)|web-based|
