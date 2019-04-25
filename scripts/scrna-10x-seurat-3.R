@@ -407,7 +407,7 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
   # - normalizes the gene expression measurements for each cell by the total expression
   # - multiplies this by a scale factor (10,000 by default)
   # - log-transforms the result
-  s_obj = NormalizeData(s_obj, normalization.method = "LogNormalize", scale.factor = 100000, verbose = FALSE)
+  s_obj = NormalizeData(s_obj, normalization.method = "LogNormalize", scale.factor = 10000, verbose = FALSE)
 
   # save counts matrix as a basic gzipped text file
   # object@data stores normalized and log-transformed single cell expression
