@@ -162,7 +162,7 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
   counts_matrix = counts_matrix[, Matrix::colSums(counts_matrix) >= 250]
 
   # remove genes without counts (there is an additional filter in CreateSeuratObject)
-  counts_matrix = counts_matrix[Matrix::rowSums(counts_matrix) >= 3, ]
+  counts_matrix = counts_matrix[Matrix::rowSums(counts_matrix) >= 5, ]
 
   # log to file
   write(glue("detectable cells: {ncol(counts_matrix)}"), file = "create.log", append = TRUE)
@@ -998,6 +998,9 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
   # algorithm: 1 = original Louvain; 2 = Louvain with multilevel refinement; 3 = SLM
   # identify clusters of cells by SNN modularity optimization based clustering algorithm
   s_obj = FindClusters(s_obj, algorithm = 3, resolution = res_range, graph.name = "snn", verbose = FALSE)
+
+  # remove "seurat_clusters" column that is added automatically (added in v3 late dev version)
+  s_obj@meta.data = s_obj@meta.data %>% select(-seurat_clusters)
 
   message("new metadata fields: ", str_c(colnames(s_obj@meta.data), collapse = ", "))
 

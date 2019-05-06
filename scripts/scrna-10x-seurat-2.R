@@ -1029,7 +1029,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 }
 
 # calculate differentially expressed genes within each cluster
-calculate_cluster_de_genes = function(seurat_obj, label, test) {
+calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig.ident") {
 
   message("\n\n ========== calculate cluster DE genes ========== \n\n")
 
@@ -1039,6 +1039,9 @@ calculate_cluster_de_genes = function(seurat_obj, label, test) {
 
   # common settings
   num_de_genes = 50
+
+  # results table
+  de_all_genes_tbl = tibble()
 
   # cluster names
   clusters = seurat_obj@ident %>% as.character() %>% unique() %>% sort()
@@ -1052,45 +1055,51 @@ calculate_cluster_de_genes = function(seurat_obj, label, test) {
     clust_obj = SubsetData(seurat_obj, ident.use = clust_name)
 
     # revert back to original sample/library labels
-    clust_obj = SetAllIdent(clust_obj, id = "orig.ident")
+    clust_obj = SetAllIdent(clust_obj, id = group_var)
 
     message("cluster cells: ", ncol(clust_obj@data))
     message("cluster groups: ", paste(levels(clust_obj@ident), collapse = ", "))
 
     # continue if cluster has multiple groups and more than 100 cells and more than 10 cells per group
-    if (length(unique(clust_obj@ident)) > 1 && ncol(clust_obj@data) > 50 && min(table(clust_obj@ident)) > 10) {
+    if (n_distinct(clust_obj@ident) > 1 && min(table(clust_obj@ident)) > 10) {
 
       # iterate through sample/library combinations (relevant if more than two)
       group_combinations = combn(levels(clust_obj@ident), m = 2, simplify = TRUE)
       for (combination_num in 1:ncol(group_combinations)) {
 
         # determine combination
-        s1 = group_combinations[1, combination_num]
-        s2 = group_combinations[2, combination_num]
-        comparison_label = glue("{s1}-vs-{s2}")
+        g1 = group_combinations[1, combination_num]
+        g2 = group_combinations[2, combination_num]
+        comparison_label = glue("{g1}-vs-{g2}")
         message(glue("comparison: {clust_name} {comparison_label}"))
 
         filename_label = glue("{de_dir}/de.{label}-{clust_name}.{comparison_label}.{test}")
 
         # find differentially expressed genes (default Wilcoxon rank sum test)
-        de_genes = FindMarkers(clust_obj, ident.1 = s1, ident.2 = s2, test.use = test,
+        de_genes = FindMarkers(clust_obj, ident.1 = g1, ident.2 = g2, test.use = test,
                                logfc.threshold = log(1), min.pct = 0.1,
                                only.pos = FALSE, print.bar = FALSE)
 
         # do some light filtering and clean up
-        de_genes = de_genes %>%
+        de_genes =
+          de_genes %>%
           rownames_to_column("gene") %>%
-          mutate(cluster = clust_name, sample1 = s1, sample2 = s2, test = test) %>%
-          select(cluster, sample1, sample2, test, gene, avg_logFC, p_val, p_val_adj) %>%
-          # filter(p_val < 0.01) %>%
-          mutate(avg_logFC = round(avg_logFC, 3)) %>%
+          mutate(cluster = clust_name, group1 = g1, group2 = g2, de_test = test) %>%
+          select(cluster, group1, group2, de_test, gene, avg_logFC, p_val, p_val_adj) %>%
+          mutate(
+            avg_logFC = round(avg_logFC, 3),
+            p_val = if_else(p_val < 0.00001, p_val, round(p_val, 5)),
+            p_val_adj = if_else(p_val_adj < 0.00001, p_val_adj, round(p_val_adj, 5))
+          ) %>%
           arrange(p_val_adj, p_val)
 
-        # message(glue("num DE genes (p<0.01): {nrow(de_genes)}"))
         message(glue("{comparison_label} num genes: {nrow(de_genes)}"))
 
         # save stats table
-        write_excel_csv(de_genes, path = glue("{filename_label}.stats.csv"))
+        write_excel_csv(de_genes, path = glue("{filename_label}.csv"))
+
+        # add cluster genes to all genes
+        de_all_genes_tbl = bind_rows(de_all_genes_tbl, de_genes)
 
         # heatmap of top genes if any significant genes are present
         if (nrow(de_genes) > 5) {
@@ -1117,6 +1126,11 @@ calculate_cluster_de_genes = function(seurat_obj, label, test) {
     message(" ")
 
   }
+
+  # save stats table
+  write_excel_csv(de_all_genes_tbl, path = glue("{de_dir}/de.{label}.{group_var}.{test}.all.csv"))
+  de_all_genes_tbl = de_all_genes_tbl %>% filter(p_val_adj < 0.01)
+  write_excel_csv(de_all_genes_tbl, path = glue("{de_dir}/de.{label}.{group_var}.{test}.sig.csv"))
 
 }
 
