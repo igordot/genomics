@@ -528,8 +528,9 @@ calculate_variance = function(seurat_obj, jackstraw_max_cells = 10000) {
 
     # compare the distribution of p-values for each PC with a uniform distribution (dashed line)
     # significant PCs will show a strong enrichment of genes with low p-values (solid curve above the dashed line)
-    plot_jackstraw = JackStrawPlot(s_obj, PCs = 1:num_pcs, nCol = 10)
-    ggsave("variance.pc.jackstraw.png", plot = plot_jackstraw, width = 15, height = 5, units = "in")
+    plot_js = JackStrawPlot(s_obj, PCs = 1:num_pcs, nCol = 10)
+    plot_js = plot_js@dr$pca@misc[["jackstraw.plot"]]
+    ggsave("variance.pc.jackstraw.png", plot = plot_js, width = 15, height = 7, units = "in")
 
   }
 
