@@ -48,6 +48,7 @@ load_libraries = function() {
     library(data.table)
     library(cowplot)
     library(scales)
+    library(pheatmap)
     library(RColorBrewer)
     library(ggsci)
     library(eulerr)
@@ -1004,8 +1005,6 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   message("new metadata fields: ", str_c(colnames(s_obj@meta.data), collapse = ", "))
 
-  # PrintFindClustersParams to print a nicely formatted formatted summary of the parameters that were chosen
-
   # create a separate sub-directory for cluster resolution plots
   clusters_dir = "clusters-resolutions"
   if (!dir.exists(clusters_dir)) dir.create(clusters_dir)
@@ -1016,10 +1015,10 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
   res_num_clusters_prev = 1
   for (res in res_cols) {
 
-    # proceed if current resolution has more clusters than previous and less than 80 (limited by the color scheme)
+    # proceed if current resolution has more clusters than previous and less than the color scheme length
     res_vector = s_obj@meta.data[, res] %>% as.character()
     res_num_clusters_cur = res_vector %>% n_distinct()
-    if (res_num_clusters_cur > res_num_clusters_prev && res_num_clusters_cur < 80) {
+    if (res_num_clusters_cur > res_num_clusters_prev && res_num_clusters_cur < length(colors_clusters)) {
 
       # check if the resolution still has original labels (characters starting with 0)
       if (min(res_vector) == "0") {
@@ -1089,7 +1088,7 @@ plot_clusters = function(seurat_obj, resolution, filename_base) {
   message("num clusters: ", num_clusters)
 
   # generate plot if there is a reasonable number of clusters
-  if (num_clusters > 1 && num_clusters < 80) {
+  if (num_clusters > 1 && num_clusters < length(colors_clusters)) {
 
     # shuffle cells so they appear randomly and one group does not show up on top
     plot_tsne =
@@ -1160,7 +1159,7 @@ set_identity = function(seurat_obj, group_var) {
 }
 
 # plot a set of genes
-plot_genes = function(seurat_obj, genes, name) {
+plot_genes = function(seurat_obj, genes, filename_base) {
 
   # color gradient for FeaturePlot-based plots
   gradient_colors = c("gray85", "red2")
@@ -1174,27 +1173,27 @@ plot_genes = function(seurat_obj, genes, name) {
       seurat_obj, features = genes, reduction = "tsne", cells = sample(colnames(seurat_obj)),
       pt.size = 0.5, cols = gradient_colors, ncol = 4
     )
-  ggsave(glue("{name}.tsne.png"), plot = feat_plot, width = 16, height = 10, units = "in")
-  ggsave(glue("{name}.tsne.pdf"), plot = feat_plot, width = 16, height = 10, units = "in")
-  
+  ggsave(glue("{filename_base}.tsne.png"), plot = feat_plot, width = 16, height = 10, units = "in")
+  ggsave(glue("{filename_base}.tsne.pdf"), plot = feat_plot, width = 16, height = 10, units = "in")
+
   # UMAP plots color-coded by expression level (should be square to match the original tSNE plots)
   feat_plot =
     FeaturePlot(
       seurat_obj, features = genes, reduction = "umap", cells = sample(colnames(seurat_obj)),
       pt.size = 0.5, cols = gradient_colors, ncol = 4
     )
-  ggsave(glue("{name}.umap.png"), plot = feat_plot, width = 16, height = 10, units = "in")
-  ggsave(glue("{name}.umap.pdf"), plot = feat_plot, width = 16, height = 10, units = "in")
-  
+  ggsave(glue("{filename_base}.umap.png"), plot = feat_plot, width = 16, height = 10, units = "in")
+  ggsave(glue("{filename_base}.umap.pdf"), plot = feat_plot, width = 16, height = 10, units = "in")
+
   # dot plot visualization
   dot_plot = DotPlot(seurat_obj, features = genes, dot.scale = 12, cols = gradient_colors)
-  ggsave(glue("{name}.dotplot.png"), plot = dot_plot, width = 20, height = 8, units = "in")
-  ggsave(glue("{name}.dotplot.pdf"), plot = dot_plot, width = 20, height = 8, units = "in")
+  ggsave(glue("{filename_base}.dotplot.png"), plot = dot_plot, width = 20, height = 8, units = "in")
+  ggsave(glue("{filename_base}.dotplot.pdf"), plot = dot_plot, width = 20, height = 8, units = "in")
 
   # gene violin plots (size.use below 0.2 doesn't seem to make a difference)
   # skip PDF since every cell has to be plotted and they become too big
   vln_plot = VlnPlot(seurat_obj, features = genes, pt.size = 0.1, combine = TRUE, cols = colors_clusters, ncol = 4)
-  ggsave(glue("{name}.violin.png"), plot = vln_plot, width = 16, height = 10, units = "in")
+  ggsave(glue("{filename_base}.violin.png"), plot = vln_plot, width = 16, height = 10, units = "in")
 
   # expression levels per cluster for bar plots (averaging and output are in non-log space)
   cluster_avg_exp = AverageExpression(seurat_obj, assay = "RNA", features = genes, verbose = FALSE)[["RNA"]]
@@ -1212,8 +1211,8 @@ plot_genes = function(seurat_obj, genes, name) {
     scale_y_continuous(expand = c(0, 0)) +
     theme_cowplot() +
     facet_wrap(~ gene, ncol = 4, scales = "free")
-  ggsave(glue("{name}.barplot.png"), plot = barplot_plot, width = 16, height = 10, units = "in")
-  ggsave(glue("{name}.barplot.pdf"), plot = barplot_plot, width = 16, height = 10, units = "in")
+  ggsave(glue("{filename_base}.barplot.png"), plot = barplot_plot, width = 16, height = 10, units = "in")
+  ggsave(glue("{filename_base}.barplot.pdf"), plot = barplot_plot, width = 16, height = 10, units = "in")
 
 }
 
@@ -1326,21 +1325,23 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 
       all_markers =
         all_markers %>%
-        select(cluster, gene, avg_logFC, myAUC, power) %>%
+        select(cluster, gene, logFC = avg_logFC, myAUC, power) %>%
         filter(power > 0.4) %>%
-        mutate(avg_logFC = round(avg_logFC, 3), myAUC = round(myAUC, 3), power = round(power, 3)) %>%
+        mutate(logFC = round(logFC, 5), myAUC = round(myAUC, 5), power = round(power, 5)) %>%
         arrange(cluster, -power)
-      top_markers = all_markers %>% filter(avg_logFC > 0) %>% group_by(cluster) %>% top_n(50, power)
+      top_markers = all_markers %>% filter(logFC > 0) %>% group_by(gene) %>% top_n(1, logFC) %>% ungroup()
+      top_markers = top_markers %>% group_by(cluster) %>% top_n(50, power) %>% ungroup()
 
     } else {
 
       all_markers =
         all_markers %>%
-        select(cluster, gene, avg_logFC, p_val, p_val_adj) %>%
+        select(cluster, gene, logFC = avg_logFC, p_val, p_val_adj) %>%
         filter(p_val_adj < 0.001) %>%
-        mutate(avg_logFC = round(avg_logFC, 3)) %>%
+        mutate(logFC = round(logFC, 5)) %>%
         arrange(cluster, p_val_adj, p_val)
-      top_markers = all_markers %>% filter(avg_logFC > 0) %>% group_by(cluster) %>% top_n(50, avg_logFC)
+      top_markers = all_markers %>% filter(logFC > 0) %>% group_by(gene) %>% top_n(1, logFC) %>% ungroup()
+      top_markers = top_markers %>% group_by(cluster) %>% top_n(50, logFC) %>% ungroup()
 
     }
 
@@ -1355,7 +1356,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
       cluster = character(),
       cluster2 = character(),
       gene = character(),
-      avg_logFC = numeric(),
+      logFC = numeric(),
       p_val = numeric(),
       p_val_adj = numeric()
     )
@@ -1384,7 +1385,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
           mutate(cluster = cluster1) %>%
           mutate(cluster2 = cluster2) %>%
           filter(p_val_adj < 0.01) %>%
-          mutate(avg_logFC = round(avg_logFC, 3)) %>%
+          mutate(logFC = round(avg_logFC, 5)) %>%
           select(one_of(colnames(unfiltered_markers)))
 
         # add current cluster combination genes to the table of all markers
@@ -1415,49 +1416,109 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
       all_markers %>%
       group_by(cluster, gene) %>%
       summarize_at(
-        c("avg_logFC", "p_val", "p_val_adj"),
-        funs(min, max)
+        c("logFC", "p_val", "p_val_adj"),
+        list(min = min, max = max)
       ) %>%
       ungroup() %>%
-      arrange(cluster, -avg_logFC_min)
-    all_markers
+      arrange(cluster, -logFC_min)
 
-    top_markers = all_markers %>% group_by(cluster) %>% top_n(50, avg_logFC_min)
+    top_markers = all_markers %>% group_by(cluster) %>% top_n(50, logFC_min) %>% ungroup()
 
   }
 
   # create a separate sub-directory for all markers
   if (!dir.exists(markers_dir)) dir.create(markers_dir)
 
+  # filename prefix
+  filename_base = glue("{markers_dir}/markers.{label}.{test}")
+
   # save unfiltered markers for pairwise comparisons
   if (pairwise) {
-    unfiltered_markers_csv = glue("{markers_dir}/markers.{label}.{test}.unfiltered.csv")
+    unfiltered_markers_csv = glue("{filename_base}.unfiltered.csv")
     message("unfiltered markers: ", unfiltered_markers_csv)
     write_excel_csv(unfiltered_markers, path = unfiltered_markers_csv)
     Sys.sleep(1)
   }
 
-  all_markers_csv = glue("{markers_dir}/markers.{label}.{test}.all.csv")
+  all_markers_csv = glue("{filename_base}.all.csv")
   message("all markers: ", all_markers_csv)
   write_excel_csv(all_markers, path = all_markers_csv)
   Sys.sleep(1)
 
-  top_markers_csv = glue("{markers_dir}/markers.{label}.{test}.top.csv")
+  top_markers_csv = glue("{filename_base}.top.csv")
   message("top markers: ", top_markers_csv)
   write_excel_csv(top_markers, path = top_markers_csv)
   Sys.sleep(1)
 
-  # get marker genes for each cluster
-  for (cluster_name in clusters) {
+  # plot cluster markers heatmap
+  plot_cluster_markers(seurat_obj, markers_tbl = top_markers, num_genes = c(5, 10, 20), filename_base = filename_base)
 
-    # plot top genes if enough were identified
-    filename_label = glue("{markers_dir}/markers.{label}-{cluster_name}.{test}")
+  # plot top cluster markers for each cluster
+  for (cluster_name in clusters) {
+    filename_cluster_base = glue("{markers_dir}/markers.{label}-{cluster_name}.{test}")
     cluster_markers = top_markers %>% filter(cluster == cluster_name)
     if (nrow(cluster_markers) > 9) {
       Sys.sleep(1)
       top_cluster_markers = cluster_markers %>% head(12) %>% pull(gene)
-      plot_genes(seurat_obj, genes = top_cluster_markers, name = filename_label)
+      plot_genes(seurat_obj, genes = top_cluster_markers, filename_base = filename_cluster_base)
     }
+
+  }
+
+}
+
+# generate cluster markers heatmap
+plot_cluster_markers = function(seurat_obj, markers_tbl, num_genes, filename_base) {
+
+  num_clusters = Idents(seurat_obj) %>% as.character() %>% n_distinct()
+  cluster_avg_exp = AverageExpression(seurat_obj, assay = "RNA", features = markers_tbl$gene, verbose = FALSE)[["RNA"]]
+  cluster_avg_exp = cluster_avg_exp %>% as.matrix() %>% log1p()
+  # sub_obj = SubsetData(seurat_obj, assay = "RNA", max.cells.per.ident = 100)
+
+  # heatmap settings
+  hm_colors = colorRampPalette(c("#053061", "#FFFFFF", "#E41A1C"))(51)
+  hm_width = ( num_clusters / 2 ) + 2
+
+  for (ng in num_genes) {
+
+    hm_base = glue("{filename_base}.heatmap.top{ng}")
+
+    # check if pairwise or standard cluster markers and sort accordingly
+    if ("logFC_min" %in% colnames(markers_tbl)) {
+      markers_top_tbl = markers_tbl %>% group_by(cluster) %>% top_n(ng, logFC_min) %>% ungroup()
+    } else {
+      markers_top_tbl = markers_tbl %>% group_by(cluster) %>% top_n(ng, logFC) %>% ungroup()
+    }
+
+    # generate the scaled expression matrix and save the text version
+    hm_mat = cluster_avg_exp[markers_top_tbl$gene, ]
+    hm_mat = hm_mat[rowSums(hm_mat) > 0, ]
+    hm_mat = hm_mat %>% t() %>% scale() %>% t()
+    hm_mat %>% round(3) %>% as_tibble(rownames = "gene") %>% write_excel_csv(path = glue("{hm_base}.csv"))
+    Sys.sleep(1)
+
+    # reduce outliers to 99th percentile
+    scale_cutoff = as.numeric(quantile(abs(hm_mat), 0.99))
+    hm_mat[hm_mat > scale_cutoff] = scale_cutoff
+    hm_mat[hm_mat < -scale_cutoff] = -scale_cutoff
+
+    # generate the heatmap
+    ph_obj = pheatmap(
+      hm_mat, scale = "none", color = hm_colors, border_color = NA, cluster_rows = FALSE, cluster_cols = FALSE,
+      fontsize = 10, fontsize_row = 8, fontsize_col = 12, show_colnames = TRUE,
+      main = glue("Cluster Markers: Top {ng}")
+    )
+
+    png(glue("{hm_base}.png"), width = hm_width, height = 10, units = "in", res = 300)
+      grid::grid.newpage()
+      grid::grid.draw(ph_obj$gtable)
+    dev.off()
+    Sys.sleep(1)
+    pdf(glue("{hm_base}.pdf"), width = hm_width, height = 10)
+      grid::grid.newpage()
+      grid::grid.draw(ph_obj$gtable)
+    dev.off()
+    Sys.sleep(1)
 
   }
 
@@ -1521,9 +1582,9 @@ calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig
           de_genes %>%
           rownames_to_column("gene") %>%
           mutate(cluster = clust_name, group1 = g1, group2 = g2, de_test = test) %>%
-          select(cluster, group1, group2, de_test, gene, avg_logFC, p_val, p_val_adj) %>%
+          select(cluster, group1, group2, de_test, gene, logFC = avg_logFC, p_val, p_val_adj) %>%
           mutate(
-            avg_logFC = round(avg_logFC, 3),
+            logFC = round(logFC, 3),
             p_val = if_else(p_val < 0.00001, p_val, round(p_val, 5)),
             p_val_adj = if_else(p_val_adj < 0.00001, p_val_adj, round(p_val_adj, 5))
           ) %>%
@@ -1539,7 +1600,7 @@ calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig
 
         # heatmap of top genes
         if (nrow(de_genes) > 5) {
-          top_de_genes = de_genes %>% top_n(num_de_genes, -p_val_adj) %>% arrange(avg_logFC) %>% pull(gene)
+          top_de_genes = de_genes %>% top_n(num_de_genes, -p_val_adj) %>% arrange(logFC) %>% pull(gene)
           plot_hm = DoHeatmap(clust_obj, features = top_de_genes, assay = "RNA", slot = "scale.data")
           heatmap_prefix = glue("{filename_label}.heatmap.top{num_de_genes}")
           ggsave(glue("{heatmap_prefix}.png"), plot = plot_hm, width = 15, height = 10, units = "in")
@@ -1595,7 +1656,7 @@ options(future.globals.maxSize = 50e9)
 
 # global settings
 colors_samples = c(brewer.pal(5, "Set1"), brewer.pal(8, "Dark2"), pal_igv("default")(51))
-colors_clusters = c(pal_d3("category10")(10), pal_d3("category20b")(20), pal_igv("default")(51))
+colors_clusters = c(pal_d3("category10")(10), pal_d3("category20b")(20), pal_igv()(51), pal_igv(alpha = 0.6)(51))
 
 # analysis info
 analysis_step = "unknown"
