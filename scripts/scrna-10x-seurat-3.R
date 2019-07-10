@@ -845,7 +845,8 @@ calculate_variance = function(seurat_obj, jackstraw_max_cells = 10000) {
 }
 
 # calculate various variance metrics and perform basic analysis (integrated analysis workflow)
-calculate_variance_integrated = function(seurat_obj, num_dim) {
+# specify neighbors for UMAP (default is 30 in Seurat 2 and 3 pre-release)
+calculate_variance_integrated = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   s_obj = seurat_obj
 
@@ -894,7 +895,7 @@ calculate_variance_integrated = function(seurat_obj, num_dim) {
   message("\n\n ========== Seurat::RunUMAP() ========== \n\n")
 
   # runs the Uniform Manifold Approximation and Projection (UMAP) dimensional reduction technique
-  s_obj = RunUMAP(s_obj, reduction = "pca", dims = 1:num_dim, verbose = FALSE)
+  s_obj = RunUMAP(s_obj, reduction = "pca", dims = 1:num_dim, n.neighbors = num_neighbors, verbose = FALSE)
 
   # tSNE using original sample names (shuffle cells so any one group does not appear overrepresented due to ordering)
   s_obj = set_identity(seurat_obj = s_obj, group_var = "orig.ident")
@@ -906,13 +907,7 @@ calculate_variance_integrated = function(seurat_obj, num_dim) {
   ggsave(glue("dr.umap.{num_dim}.sample.pdf"), plot = plot_umap, width = 10, height = 6, units = "in")
   Sys.sleep(1)
 
-  # compile all cell metadata into a single table
-  metadata_tbl = s_obj@meta.data %>% rownames_to_column("cell") %>% as_tibble() %>% mutate(sample_name = orig.ident)
-  tsne_tbl = s_obj[["tsne"]]@cell.embeddings %>% round(3) %>% as.data.frame() %>% rownames_to_column("cell")
-  umap_tbl = s_obj[["umap"]]@cell.embeddings %>% round(3) %>% as.data.frame() %>% rownames_to_column("cell")
-  cells_metadata = metadata_tbl %>% full_join(tsne_tbl, by = "cell") %>% full_join(umap_tbl, by = "cell")
-  cells_metadata = cells_metadata %>% arrange(cell)
-  write_excel_csv(cells_metadata, path = "metadata.csv")
+  save_metadata(seurat_obj = s_obj)
 
   return(s_obj)
 
@@ -994,7 +989,7 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
   # resolutions for graph-based clustering
   # increased resolution values lead to more clusters (recommendation: 0.6-1.2 for 3K cells, 2-4 for 33K cells)
   res_range = seq(0.1, 2.5, 0.1)
-  if (ncol(s_obj) > 1000) res_range = c(res_range, 3, 4, 5, 6, 7, 8)
+  if (ncol(s_obj) > 1000) res_range = c(res_range, 3, 4, 5, 6, 7, 8, 9)
 
   # algorithm: 1 = original Louvain; 2 = Louvain with multilevel refinement; 3 = SLM
   # identify clusters of cells by SNN modularity optimization based clustering algorithm
@@ -1062,15 +1057,22 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   message("updated metadata fields: ", str_c(colnames(s_obj@meta.data), collapse = ", "))
 
-  # compile all cell metadata into a single table
+  save_metadata(seurat_obj = s_obj)
+
+  return(s_obj)
+
+}
+
+# compile all cell metadata into a single table
+save_metadata = function(seurat_obj) {
+
+  s_obj = seurat_obj
   metadata_tbl = s_obj@meta.data %>% rownames_to_column("cell") %>% as_tibble() %>% mutate(sample_name = orig.ident)
   tsne_tbl = s_obj[["tsne"]]@cell.embeddings %>% round(3) %>% as.data.frame() %>% rownames_to_column("cell")
   umap_tbl = s_obj[["umap"]]@cell.embeddings %>% round(3) %>% as.data.frame() %>% rownames_to_column("cell")
   cells_metadata = metadata_tbl %>% full_join(tsne_tbl, by = "cell") %>% full_join(umap_tbl, by = "cell")
   cells_metadata = cells_metadata %>% arrange(cell)
   write_excel_csv(cells_metadata, path = "metadata.csv")
-
-  return(s_obj)
 
 }
 
@@ -1097,9 +1099,9 @@ plot_clusters = function(seurat_obj, resolution, filename_base) {
         pt.size = get_dr_point_size(s_obj), cols = colors_clusters
       ) +
       theme(aspect.ratio = 1)
-    ggsave(glue("{filename_base}.tsne.png"), plot = plot_tsne, width = 8, height = 6, units = "in")
+    ggsave(glue("{filename_base}.tsne.png"), plot = plot_tsne, width = 9, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("{filename_base}.tsne.pdf"), plot = plot_tsne, width = 8, height = 6, units = "in")
+    ggsave(glue("{filename_base}.tsne.pdf"), plot = plot_tsne, width = 9, height = 6, units = "in")
     Sys.sleep(1)
 
     plot_umap =
@@ -1108,9 +1110,9 @@ plot_clusters = function(seurat_obj, resolution, filename_base) {
         pt.size = get_dr_point_size(s_obj), cols = colors_clusters
       ) +
       theme(aspect.ratio = 1)
-    ggsave(glue("{filename_base}.umap.png"), plot = plot_umap, width = 8, height = 6, units = "in")
+    ggsave(glue("{filename_base}.umap.png"), plot = plot_umap, width = 9, height = 6, units = "in")
     Sys.sleep(1)
-    ggsave(glue("{filename_base}.umap.pdf"), plot = plot_umap, width = 8, height = 6, units = "in")
+    ggsave(glue("{filename_base}.umap.pdf"), plot = plot_umap, width = 9, height = 6, units = "in")
     Sys.sleep(1)
 
     if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
@@ -1329,7 +1331,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
         filter(power > 0.4) %>%
         mutate(logFC = round(logFC, 5), myAUC = round(myAUC, 5), power = round(power, 5)) %>%
         arrange(cluster, -power)
-      top_markers = all_markers %>% filter(logFC > 0) %>% group_by(gene) %>% top_n(1, logFC) %>% ungroup()
+      top_markers = all_markers %>% filter(logFC > 0)
       top_markers = top_markers %>% group_by(cluster) %>% top_n(50, power) %>% ungroup()
 
     } else {
@@ -1340,7 +1342,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
         filter(p_val_adj < 0.001) %>%
         mutate(logFC = round(logFC, 5)) %>%
         arrange(cluster, p_val_adj, p_val)
-      top_markers = all_markers %>% filter(logFC > 0) %>% group_by(gene) %>% top_n(1, logFC) %>% ungroup()
+      top_markers = all_markers %>% filter(logFC > 0)
       top_markers = top_markers %>% group_by(cluster) %>% top_n(50, logFC) %>% ungroup()
 
     }
@@ -1451,7 +1453,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
   Sys.sleep(1)
 
   # plot cluster markers heatmap
-  plot_cluster_markers(seurat_obj, markers_tbl = top_markers, num_genes = c(5, 10, 20), filename_base = filename_base)
+  plot_cluster_markers(seurat_obj, markers_tbl = all_markers, num_genes = c(5, 10, 20), filename_base = filename_base)
 
   # plot top cluster markers for each cluster
   for (cluster_name in clusters) {
@@ -1470,10 +1472,20 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 # generate cluster markers heatmap
 plot_cluster_markers = function(seurat_obj, markers_tbl, num_genes, filename_base) {
 
+  # adjust pairwise clusters to match the standard format
+  if ("logFC_min" %in% colnames(markers_tbl)) {
+    markers_tbl = markers_tbl %>% mutate(logFC = logFC_min)
+  }
+
+  # keep only the top cluster for each gene so each gene appears once
+  markers_tbl = markers_tbl %>% filter(logFC > 0)
+  markers_tbl = markers_tbl %>% group_by(gene) %>% top_n(1, logFC) %>% slice(1) %>% ungroup()
+
   num_clusters = Idents(seurat_obj) %>% as.character() %>% n_distinct()
-  cluster_avg_exp = AverageExpression(seurat_obj, assay = "RNA", features = markers_tbl$gene, verbose = FALSE)[["RNA"]]
+  marker_genes = markers_tbl %>% pull(gene) %>% unique() %>% sort()
+  cluster_avg_exp = AverageExpression(seurat_obj, assay = "RNA", features = marker_genes, verbose = FALSE)[["RNA"]]
   cluster_avg_exp = cluster_avg_exp %>% as.matrix() %>% log1p()
-  # sub_obj = SubsetData(seurat_obj, assay = "RNA", max.cells.per.ident = 100)
+  cluster_avg_exp = cluster_avg_exp[rowSums(cluster_avg_exp) > 0, ]
 
   # heatmap settings
   hm_colors = colorRampPalette(c("#053061", "#FFFFFF", "#E41A1C"))(51)
@@ -1483,22 +1495,17 @@ plot_cluster_markers = function(seurat_obj, markers_tbl, num_genes, filename_bas
 
     hm_base = glue("{filename_base}.heatmap.top{ng}")
 
-    # check if pairwise or standard cluster markers and sort accordingly
-    if ("logFC_min" %in% colnames(markers_tbl)) {
-      markers_top_tbl = markers_tbl %>% group_by(cluster) %>% top_n(ng, logFC_min) %>% ungroup()
-    } else {
-      markers_top_tbl = markers_tbl %>% group_by(cluster) %>% top_n(ng, logFC) %>% ungroup()
-    }
+    markers_top_tbl = markers_tbl %>% group_by(cluster) %>% top_n(ng, logFC) %>% ungroup()
+    markers_top_tbl = markers_top_tbl %>% arrange(cluster, -logFC)
 
     # generate the scaled expression matrix and save the text version
     hm_mat = cluster_avg_exp[markers_top_tbl$gene, ]
-    hm_mat = hm_mat[rowSums(hm_mat) > 0, ]
     hm_mat = hm_mat %>% t() %>% scale() %>% t()
     hm_mat %>% round(3) %>% as_tibble(rownames = "gene") %>% write_excel_csv(path = glue("{hm_base}.csv"))
     Sys.sleep(1)
 
-    # reduce outliers to 99th percentile
-    scale_cutoff = as.numeric(quantile(abs(hm_mat), 0.99))
+    # set outliers to 95th percentile to yield a more balanced color scale
+    scale_cutoff = as.numeric(quantile(abs(hm_mat), 0.95))
     hm_mat[hm_mat > scale_cutoff] = scale_cutoff
     hm_mat[hm_mat < -scale_cutoff] = -scale_cutoff
 
@@ -1649,7 +1656,9 @@ opts = docopt(doc)
 # dependencies
 load_libraries()
 
-# evaluate R expressions asynchronously when possible (such as ScaleData)
+# set number of cores for parallel package (will use all available cores by default)
+options(mc.cores = 4)
+# evaluate Seurat R expressions asynchronously when possible (such as ScaleData) using future package
 plan("multiprocess", workers = 4)
 # increase the limit of the data to be shuttled between the processes from default 500MB to 50GB
 options(future.globals.maxSize = 50e9)
