@@ -1,10 +1,10 @@
 # Initializing draft genome directory
 
 
-The requirement for [setting up a reference genome directory]
-(https://github.com/igordot/genomics/blob/master/workflows/ref-genome-init.md) is having two basic files:
- - `genome.fa` - genome sequence in FASTA format
- - `genes.gtf` - gene annotations in GTF format
+The requirement for [setting up a reference genome directory](https://github.com/igordot/genomics/blob/master/workflows/ref-genome-init.md) is having two basic files:
+
+* `genome.fa` - genome sequence in FASTA format
+* `genes.gtf` - gene annotations in GTF format
 
 Properly formatted sequence and annotation files are readily available for commonly analyzed genomes. Less popular and 
 draft genomes are less standardized and can be more difficult to work with.
@@ -19,16 +19,20 @@ When working with a new genome, Ensembl is usually a good place to start as it c
 many species. You can find the [SaiBol1 genome](http://pre.ensembl.org/Saimiri_boliviensis/Info/Index).
 
 The FASTA and GTF files are available and can be downloaded:
-```
+
+```bash
 wget -O genome.ensembl.pre.fa.gz ftp://ftp.ensembl.org/pub/pre/fasta/dna/saimiri_boliviensis/Saimiri_boliviensis.SaiBol1.0.dna_rm.toplevel.fa.gz
 wget -O genes.ensembl.pre.gtf.gz ftp://ftp.ensembl.org/pub/pre/gtf/saimiri_boliviensis/SaiBol1.0.genes.gtf.gz
 ```
 
 Once you have the reference files, it's a good idea to spot-check them.
-```
+
+```bash
 zcat genome.ensembl.pre.fa.gz | grep ">" | head
 ```
+
 Output:
+
 ```
 >scaffold:SaiBol1.0:JH378105.1:1:72162052:1 scaffold JH378105.1
 >scaffold:SaiBol1.0:JH378106.1:1:71252344:1 scaffold JH378106.1
@@ -42,10 +46,12 @@ Output:
 >scaffold:SaiBol1.0:JH378114.1:1:44255708:1 scaffold JH378114.1
 ```
 
-```
+```bash
 zcat genes.ensembl.pre.gtf.gz | head
 ```
+
 Output:
+
 ```
 JH378796.1	protein_coding	exon	805	910	.	+	.	 gene_id "ENSP00000271139_1"; transcript_id "ENSP00000271139_1"; exon_number "1"; gene_biotype "protein_coding";
 JH378796.1	protein_coding	CDS	805	910	.	+	0	 gene_id "ENSP00000271139_1"; transcript_id "ENSP00000271139_1"; exon_number "1"; gene_biotype "protein_coding"; protein_id "ENSP00000271139_1";
@@ -72,10 +78,12 @@ NCBI has a lot of databases, so it can be difficult to navigate. It also has the
 [SaiBol1 genome](https://www.ncbi.nlm.nih.gov/genome/6907), which is also based GCA_000235385.1 like Ensembl.
 
 There is no GTF, but there is a GFF.
-```
+
+```bash
 wget -O genome.ncbi.fa.gz ftp://ftp.ncbi.nlm.nih.gov/genomes/Saimiri_boliviensis/CHR_Un/39432_ref_SaiBol1.0_chrUn.fa.gz
 wget -O genes.ncbi.gff3.gz ftp://ftp.ncbi.nlm.nih.gov/genomes/Saimiri_boliviensis/GFF/ref_SaiBol1.0_scaffolds.gff3.gz
 ```
+
 There are actually two GFF files: `scaffolds.gff3.gz` and `top_level.gff3.gz`, but they are identical based on both file 
 size and `md5sum`.
 
@@ -110,19 +118,21 @@ NW_003943604.1	Gnomon	gene	16666	24141	.	+	.	ID=gene1;Dbxref=GeneID:101050261;Na
 These reference files aren't perfect either, but at least the gene names are present.
 
 Fix the FASTA contig names so they match the GFF contig names (`NW_*` or `NC_*`):
-```
+
+```bash
 zcat genome.ncbi.fa.gz | perl -pe 's/gi\|.*\|(N._.+?)\|.*/\1/g' > genome.fa
 ```
 
 Convert GFF to GTF using `gffread` (part of Cufflinks suite):
-```
+
+```bash
 zcat genes.ncbi.gff3.gz | gffread - -T -o genes.ncbi.gff3.gtf
 ```
 
 A few (24 out of over 850,000) of the GTF entries do not contain `gene_id` or `gene_name`. Remove those:
-```
+
+```bash
 cat genes.ncbi.gff3.gtf | grep "gene_name" > genes.gtf
 ```
 
-This leaves us with a clean `genome.fa` and `genes.gtf` for [setting up a reference genome directory]
-(https://github.com/igordot/genomics/blob/master/workflows/ref-genome-init.md).
+This leaves us with a clean `genome.fa` and `genes.gtf` for [setting up a reference genome directory](https://github.com/igordot/genomics/blob/master/workflows/ref-genome-init.md).

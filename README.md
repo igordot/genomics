@@ -3,9 +3,9 @@ computational genomics resources
 contents:
 
 * `notes`: notes and simple computational tasks
-* `workflows`: multi-step protocols for specific tasks
-* `scripts`: complete scripts for simple tasks
-* `scripts-phoenix`: scripts optimized for the phoenix cluster (include references to data and system variables)
+* `workflows`: multi-step protocols
+* `scripts`: complete scripts for specific tasks
+* `scripts-bigpurple` and `scripts-phoenix`: scripts optimized for a specific cluster (include references to data and system variables)
 
 related repositories:
 
