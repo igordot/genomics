@@ -66,9 +66,10 @@ JH378584.1	protein_coding	CDS	3155	3293	.	+	2	 gene_id "ENSP00000250416_1"; tran
 ```
 
 There are several issues:
- - FASTA contig names have spaces. This is usually fine, but will cause errors with some tools.
- - GTF contig names (first column) do not match FASTA contig names (the full line after `>`).
- - GTF records have `gene_id`, but not `gene_name`. Most biologists will want to know the gene names.
+
+* FASTA contig names have spaces. This is usually fine, but will cause errors with some tools.
+* GTF contig names (first column) do not match FASTA contig names (the full line after `>`).
+* GTF records have `gene_id`, but not `gene_name`. Most biologists will want to know the gene names.
 
 The first two problems can be solved with a few command line commands. The last one is more complicated.
 
