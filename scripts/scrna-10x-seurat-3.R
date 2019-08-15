@@ -55,6 +55,8 @@ load_libraries = function() {
     library(UpSetR)
   })
 
+  theme_set(theme_cowplot())
+
 }
 
 # create a single Seurat object from multiple 10x Cell Ranger outputs
@@ -245,6 +247,7 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
       axis.title.x = element_blank(),
       axis.title.y = element_blank(),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      plot.title = element_text(hjust = 0.5),
       legend.position = "none"
     )
   suppressMessages({
@@ -278,17 +281,17 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
     FeatureScatter(
       s_obj, feature1 = "num_UMIs", feature2 = "num_genes", group.by = "orig.ident", cols = colors_samples
     ) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
   cor_ncr_pmt_plot =
     FeatureScatter(
       s_obj, feature1 = "num_UMIs", feature2 = "pct_mito", group.by = "orig.ident", cols = colors_samples
     ) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
   cor_nfr_pmt_plot =
     FeatureScatter(
       s_obj, feature1 = "num_genes", feature2 = "pct_mito", group.by = "orig.ident", cols = colors_samples
     ) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
   cor_unfilt_plot = plot_grid(cor_ncr_nfr_plot, cor_ncr_pmt_plot, cor_nfr_pmt_plot, ncol = 3)
   ggsave("qc.correlations.unfiltered.png", plot = cor_unfilt_plot, width = 18, height = 5, units = "in")
   Sys.sleep(1)
@@ -374,6 +377,7 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
       axis.title.x = element_blank(),
       axis.title.y = element_blank(),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      plot.title = element_text(hjust = 0.5),
       legend.position = "none"
     )
   suppressMessages({
@@ -531,6 +535,7 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
       axis.title.x = element_blank(),
       axis.title.y = element_blank(),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      plot.title = element_text(hjust = 0.5),
       legend.position = "none"
     )
   suppressMessages({
@@ -716,6 +721,7 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
       axis.title.x = element_blank(),
       axis.title.y = element_blank(),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      plot.title = element_text(hjust = 0.5),
       legend.position = "none"
     )
   suppressMessages({
@@ -877,7 +883,7 @@ calculate_variance_integrated = function(seurat_obj, num_dim, num_neighbors = 30
 
   # use tSNE as a tool to visualize, not for clustering directly on tSNE components
   # cells within the graph-based clusters determined above should co-localize on the tSNE plot
-  s_obj = RunTSNE(s_obj, reduction = "pca", dims.use = 1:num_dim)
+  s_obj = RunTSNE(s_obj, reduction = "pca", dims = 1:num_dim, dim.embed = 2)
 
   # reduce point size for larger datasets
   dr_pt_size = get_dr_point_size(s_obj)
@@ -940,7 +946,7 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   # use tSNE as a tool to visualize, not for clustering directly on tSNE components
   # cells within the graph-based clusters determined above should co-localize on the tSNE plot
-  s_obj = RunTSNE(s_obj, reduction = "pca", dims.use = 1:num_dim)
+  s_obj = RunTSNE(s_obj, reduction = "pca", dims = 1:num_dim, dim.embed = 2)
 
   # reduce point size for larger datasets
   dr_pt_size = get_dr_point_size(s_obj)
@@ -1327,8 +1333,8 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
 
       all_markers =
         all_markers %>%
-        select(cluster, gene, logFC = avg_logFC, myAUC, power) %>%
-        filter(power > 0.4) %>%
+        select(cluster, gene, logFC = avg_diff, myAUC, power) %>%
+        filter(power > 0.3) %>%
         mutate(logFC = round(logFC, 5), myAUC = round(myAUC, 5), power = round(power, 5)) %>%
         arrange(cluster, -power)
       top_markers = all_markers %>% filter(logFC > 0)
