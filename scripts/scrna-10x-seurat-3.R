@@ -12,6 +12,8 @@ Additional optional steps:
   combine - merge multiple samples/libraries (no batch correction)
   integrate - perform integration (batch correction) across multiple sample batches
   de - differential expression between samples/libraries within clusters
+  adt - add antibody-derived tag data
+  hto - add hashtag oligo data and split by hashtag
 
 Usage:
   scrna-10x-seurat-3.R create <analysis_dir> <sample_name> <sample_dir> [--min_genes=<n> --max_genes=<n> --mt=<n>]
@@ -20,6 +22,8 @@ Usage:
   scrna-10x-seurat-3.R combine <analysis_dir> <sample_analysis_dir>...
   scrna-10x-seurat-3.R integrate <analysis_dir> <num_dim> <batch_analysis_dir>...
   scrna-10x-seurat-3.R de <analysis_dir> <resolution>
+  scrna-10x-seurat-3.R adt <analysis_dir> <sample_name> <sample_dir>
+  scrna-10x-seurat-3.R hto <analysis_dir> <sample_name> <sample_dir>
   scrna-10x-seurat-3.R --help
 
 Options:
@@ -53,13 +57,14 @@ load_libraries = function() {
     library(ggsci)
     library(eulerr)
     library(UpSetR)
+    library(ggforce)
   })
 
   theme_set(theme_cowplot())
 
 }
 
-# create a single Seurat object from multiple 10x Cell Ranger outputs
+# create a single Seurat object from 10x Cell Ranger output (can be multiple directories)
 # takes vector of one or more sample_names and sample_dirs
 # can work with multiple samples, but the appropriate way is to use "combine" with objects that are pre-filtered
 load_sample_counts_matrix = function(sample_names, sample_dirs) {
@@ -76,7 +81,7 @@ load_sample_counts_matrix = function(sample_names, sample_dirs) {
     message("loading counts matrix for sample: ", sample_name)
 
     # check if sample dir is valid
-    if (!dir.exists(sample_dir)) stop(glue("dir {sample_dir} does not exist"))
+    if (!dir.exists(sample_dir)) { stop(glue("dir {sample_dir} does not exist")) }
 
     # determine counts matrix directory (HDF5 is not the preferred option)
     # "filtered_gene_bc_matrices" for single library
@@ -84,11 +89,11 @@ load_sample_counts_matrix = function(sample_names, sample_dirs) {
     # Cell Ranger 3.0: "genes" has been replaced by "features" to account for feature barcoding
     # Cell Ranger 3.0: the matrix and barcode files are now gzipped
     data_dir = glue("{sample_dir}/outs")
-    if (!dir.exists(data_dir)) stop(glue("dir {sample_dir} does not contain outs directory"))
+    if (!dir.exists(data_dir)) { stop(glue("dir {sample_dir} does not contain outs directory")) }
     data_dir = list.files(path = data_dir, pattern = "matrix.mtx", full.names = TRUE, recursive = TRUE)
     data_dir = str_subset(data_dir, "filtered_.*_bc_matri")[1]
     data_dir = dirname(data_dir)
-    if (!dir.exists(data_dir)) stop(glue("dir {sample_dir} does not contain matrix.mtx"))
+    if (!dir.exists(data_dir)) { stop(glue("dir {sample_dir} does not contain matrix.mtx")) }
 
     message("loading counts matrix dir: ", data_dir)
 
@@ -96,7 +101,6 @@ load_sample_counts_matrix = function(sample_names, sample_dirs) {
 
     message(glue("library {sample_name} cells: {ncol(counts_matrix)}"))
     message(glue("library {sample_name} genes: {nrow(counts_matrix)}"))
-    message(" ")
 
     # log to file
     write(glue("library {sample_name} cells: {ncol(counts_matrix)}"), file = "create.log", append = TRUE)
@@ -216,7 +220,6 @@ create_seurat_obj = function(counts_matrix, proj_name = NULL, sample_dir = NULL)
 
   message(glue("imported cells: {ncol(s_obj)}"))
   message(glue("imported genes: {nrow(s_obj)}"))
-  message(" ")
 
   # log to file
   write(glue("imported cells: {ncol(s_obj)}"), file = "create.log", append = TRUE)
@@ -431,6 +434,378 @@ filter_data = function(seurat_obj, min_genes = NULL, max_genes = NULL, max_mt = 
 
 }
 
+# add antibody-derived tags (ADT) data to a Seurat object
+add_adt_assay = function(seurat_obj, sample_name, sample_dir) {
+
+  message("\n\n ========== import antibody-derived tags (ADT) ========== \n\n")
+
+  message("loading ADT matrix for sample: ", sample_name)
+
+  # check if sample dir is valid
+  if (!dir.exists(sample_dir)) { stop(glue("dir {sample_dir} does not exist")) }
+  if (!file.exists(glue("{sample_dir}/matrix.mtx.gz"))) { stop(glue("dir does not contain matrix.mtx.gz")) }
+
+  adt_mat = Read10X(data.dir = sample_dir, gene.column = 1)
+  adt_mat = as.matrix(adt_mat)
+
+  # removed "unmapped" ADT
+  if (rownames(adt_mat)[length(rownames(adt_mat))] == "unmapped") {
+    adt_mat = adt_mat[1:length(rownames(adt_mat))-1, ]
+  }
+
+  message(glue("ADT library {sample_name} cells: {ncol(adt_mat)}"))
+  message(glue("ADT library {sample_name} ADTs: {nrow(adt_mat)}"))
+
+  # log to file
+  write(glue("ADT library {sample_name} cells: {ncol(adt_mat)}"), file = "create.log", append = TRUE)
+  write(glue("ADT library {sample_name} ADTs: {nrow(adt_mat)}"), file = "create.log", append = TRUE)
+
+  # clean up hashtag matrix to match the RNA data
+  rownames(adt_mat) = str_sub(rownames(adt_mat), 1, -17)
+  adt_mat = adt_mat[sort(rownames(adt_mat)), ]
+  colnames(adt_mat) = str_c(sample_name, ":", colnames(adt_mat))
+
+  # Seurat replaces "_" or "|" in feature names with "-"
+  # rownames(adt_mat) = str_replace(rownames(adt_mat), "_", "-")
+
+  # clean up counts matrix to match the RNA data
+  common_cells = intersect(colnames(adt_mat), colnames(seurat_obj))
+  if (length(common_cells) < 10) { stop("cell names do not match expression matrix") }
+  adt_mat = adt_mat[, common_cells]
+
+  message(glue("RNA library {sample_name} cells: {ncol(seurat_obj)}"))
+  message(glue("RNA and ADT library {sample_name} common cells: {ncol(adt_mat)}"))
+  write(glue("RNA and ADT library {sample_name} common cells: {ncol(adt_mat)}"), file = "create.log", append = TRUE)
+
+  # create a matrix that includes all cells from the original seurat object (fill 0 for missing cells)
+  adt_filled_mat = matrix(data = 0, nrow = nrow(adt_mat), ncol = ncol(seurat_obj))
+  colnames(adt_filled_mat) = colnames(seurat_obj)
+  rownames(adt_filled_mat) = rownames(adt_mat)
+  adt_filled_mat[, common_cells] = adt_mat[, common_cells]
+
+  # add ADT data as a new assay independent from RNA
+  seurat_obj[["ADT"]] = CreateAssayObject(counts = adt_filled_mat)
+
+  # rename nCount_RNA and nFeature_RNA slots to make them more clear
+  seurat_obj$num_ADT_UMIs = seurat_obj$nCount_ADT
+  seurat_obj$num_ADT_genes = seurat_obj$nFeature_ADT
+
+  message("\n\n ========== normalize ADT data ========== \n\n")
+
+  # normalize ADT data using centered log-ratio (CLR) transformation
+  seurat_obj = NormalizeData(seurat_obj, assay = "ADT", normalization.method = "CLR")
+  seurat_obj = ScaleData(seurat_obj, assay = "ADT")
+
+  # save raw ADT counts matrix as a text file
+  counts_raw = GetAssayData(seurat_obj, assay = "ADT", slot = "counts") %>% as.matrix()
+  counts_raw = counts_raw %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+  # write_csv(counts_raw, path = "counts.raw.csv.gz")
+  fwrite(counts_raw, file = "counts.adt.raw.csv", sep = ",")
+  R.utils::gzip("counts.adt.raw.csv")
+
+  # save normalized ADT counts matrix as a text file
+  counts_norm = GetAssayData(seurat_obj, assay = "ADT") %>% as.matrix() %>% round(3)
+  counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
+  # write_csv(counts_norm, path = "counts.normalized.csv.gz")
+  fwrite(counts_norm, file = "counts.adt.normalized.csv", sep = ",")
+  R.utils::gzip("counts.adt.normalized.csv")
+
+  # plot ADT metrics
+  plot_adt_qc(seurat_obj = seurat_obj)
+
+  Idents(seurat_obj) = "orig.ident"
+
+  return(seurat_obj)
+
+}
+
+# plot ADT metrics
+plot_adt_qc = function(seurat_obj) {
+
+  # create a named color scheme to ensure names and colors are in the proper order
+  sample_names = seurat_obj$orig.ident %>% as.character() %>% sort() %>% unique()
+  colors_samples_named = colors_samples[1:length(sample_names)]
+  names(colors_samples_named) = sample_names
+
+  vln_theme =
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      plot.title = element_text(hjust = 0.5),
+      legend.position = "none"
+    )
+  suppressMessages({
+    dist_adt_g_plot =
+      VlnPlot(
+        seurat_obj, features = "num_ADT_genes", group.by = "orig.ident",
+        pt.size = 0.1, sort = TRUE, combine = TRUE, cols = colors_samples_named
+      ) +
+      scale_y_continuous(labels = comma) +
+      vln_theme
+    dist_adt_u_plot =
+      VlnPlot(
+        seurat_obj, features = "num_ADT_UMIs", group.by = "orig.ident",
+        pt.size = 0.1, sort = TRUE, combine = TRUE, cols = colors_samples_named
+      ) +
+      scale_y_continuous(labels = comma) +
+      vln_theme
+    dist_pct_m_plot =
+      VlnPlot(
+        seurat_obj, features = "pct_mito", group.by = "orig.ident",
+        pt.size = 0.1, sort = TRUE, combine = TRUE, cols = colors_samples_named
+      ) +
+      scale_y_continuous(labels = comma) +
+      vln_theme
+    dist_plot = plot_grid(dist_adt_g_plot, dist_adt_u_plot, dist_pct_m_plot, ncol = 3)
+    ggsave("qc.adt.distribution.png", plot = dist_plot, width = 20, height = 6, units = "in")
+  })
+  Sys.sleep(1)
+
+  cor_umis_plot =
+    FeatureScatter(
+      seurat_obj, feature1 = "num_genes", feature2 = "num_ADT_genes",
+      group.by = "orig.ident", cols = colors_samples_named
+    ) +
+    theme(aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
+  cor_genes_plot =
+    FeatureScatter(
+      seurat_obj, feature1 = "num_UMIs", feature2 = "num_ADT_UMIs",
+      group.by = "orig.ident", cols = colors_samples_named
+    ) +
+    theme(aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
+  cor_mito_plot =
+    FeatureScatter(
+      seurat_obj, feature1 = "pct_mito", feature2 = "num_ADT_UMIs",
+      group.by = "orig.ident", cols = colors_samples_named
+    ) +
+    theme(aspect.ratio = 1, plot.title = element_text(hjust = 0.5))
+  cor_adt_plot = plot_grid(cor_umis_plot, cor_genes_plot, cor_mito_plot, ncol = 3)
+  ggsave("qc.adt.correlations.png", plot = cor_adt_plot, width = 18, height = 5, units = "in")
+  Sys.sleep(1)
+
+}
+
+# add hashtag oligo (HTO) data to a Seurat object
+add_hto_assay = function(seurat_obj, sample_name, sample_dir) {
+
+  # make sure the input object already has UMAP dimensions computed
+  if (is.null(seurat_obj@reductions$umap)) { stop("UMAP not computed yet") }
+
+  message("\n\n ========== import hashtag oligos (HTOs) ========== \n\n")
+
+  message("loading HTO matrix for sample: ", sample_name)
+
+  # check if sample dir is valid
+  if (!dir.exists(sample_dir)) { stop(glue("dir {sample_dir} does not exist")) }
+  if (!file.exists(glue("{sample_dir}/matrix.mtx.gz"))) { stop(glue("dir does not contain matrix.mtx.gz")) }
+
+  hto_mat = Read10X(data.dir = sample_dir, gene.column = 1)
+  hto_mat = as.matrix(hto_mat)
+
+  # removed "unmapped" HTO
+  if (rownames(hto_mat)[length(rownames(hto_mat))] == "unmapped") {
+    hto_mat = hto_mat[1:length(rownames(hto_mat))-1, ]
+  }
+
+  message(glue("HTO library {sample_name} cells: {ncol(hto_mat)}"))
+  message(glue("HTO library {sample_name} HTOs: {nrow(hto_mat)}"))
+
+  # log to file
+  write(glue("HTO library {sample_name} cells: {ncol(hto_mat)}"), file = "create.log", append = TRUE)
+  write(glue("HTO library {sample_name} HTOs: {nrow(hto_mat)}"), file = "create.log", append = TRUE)
+
+  # clean up hashtag matrix to match the RNA data
+  rownames(hto_mat) = str_sub(rownames(hto_mat), 1, -17)
+  hto_mat = hto_mat[sort(rownames(hto_mat)), ]
+  colnames(hto_mat) = str_c(sample_name, ":", colnames(hto_mat))
+
+  # Seurat replaces "_" or "|" in feature names with "-"
+  # rownames(hto_mat) = str_replace(rownames(hto_mat), "_", "-")
+
+  # clean up counts matrix to match the RNA data
+  common_cells = intersect(colnames(hto_mat), colnames(seurat_obj))
+  if (length(common_cells) < 10) { stop("cell names do not match expression matrix") }
+  hto_mat = hto_mat[, common_cells]
+
+  message(glue("RNA library {sample_name} cells: {ncol(seurat_obj)}"))
+  message(glue("RNA and HTO library {sample_name} common cells: {ncol(hto_mat)}"))
+  write(glue("RNA and HTO library {sample_name} common cells: {ncol(hto_mat)}"), file = "create.log", append = TRUE)
+
+  # create a matrix that includes all cells from the original seurat object (fill 0 for missing cells)
+  hto_filled_mat = matrix(data = 0, nrow = nrow(hto_mat), ncol = ncol(seurat_obj))
+  colnames(hto_filled_mat) = colnames(seurat_obj)
+  rownames(hto_filled_mat) = rownames(hto_mat)
+  hto_filled_mat[, common_cells] = hto_mat[, common_cells]
+
+  # add HTO data as a new assay independent from RNA
+  seurat_obj[["HTO"]] = CreateAssayObject(counts = hto_filled_mat)
+
+  # normalize HTO data using centered log-ratio (CLR) transformation
+  seurat_obj = NormalizeData(seurat_obj, assay = "HTO", normalization.method = "CLR")
+
+  # assign single cells back to their sample origins
+  seurat_obj = HTODemux(seurat_obj, assay = "HTO", kfunc = "kmeans")
+
+  # label cells that did not have HTO data to differentiate them from negative cells
+  no_hto_cells = setdiff(colnames(seurat_obj), common_cells)
+  if (length(no_hto_cells) > 0) {
+    seurat_obj@meta.data$HTO_classification.global = as.character(seurat_obj@meta.data$HTO_classification.global)
+    seurat_obj@meta.data[no_hto_cells, "HTO_classification.global"] = "Undetermined"
+    seurat_obj@meta.data$HTO_classification.global = factor(seurat_obj@meta.data$HTO_classification.global)
+    seurat_obj@meta.data$hash.ID = as.character(seurat_obj@meta.data$hash.ID)
+    seurat_obj@meta.data[no_hto_cells, "hash.ID"] = "Undetermined"
+    seurat_obj@meta.data$hash.ID = factor(seurat_obj@meta.data$hash.ID)
+  }
+
+  # plot HTO metrics
+  plot_hto_qc(seurat_obj = seurat_obj)
+
+  # save HTO stats
+  Idents(seurat_obj) = "hash.ID"
+  calculate_cluster_stats(seurat_obj = seurat_obj, label = "hto")
+
+  # update metadata, setting the hashtag as the sample name
+  seurat_obj@meta.data$library = factor(seurat_obj@meta.data$orig.ident)
+  seurat_obj@meta.data$orig.ident = factor(seurat_obj@meta.data$hash.ID)
+
+  Idents(seurat_obj) = "orig.ident"
+
+  return(seurat_obj)
+
+}
+
+# plot HTO metrics
+plot_hto_qc = function(seurat_obj) {
+
+  # normalized HTO signal combined with metadata table
+  hto_tbl = GetAssayData(seurat_obj, assay = "HTO") %>% t()
+  hto_tbl = hto_tbl[, sort(colnames(hto_tbl))] %>% as_tibble(rownames = "cell")
+  id_tbl = seurat_obj@meta.data %>% as_tibble(rownames = "cell") %>% select(cell, hash.ID, HTO_classification.global)
+  hto_tbl = full_join(hto_tbl, id_tbl, by = "cell")
+  hto_tbl
+
+  # HTO color scheme
+  colors_hto_names = c(levels(hto_tbl$HTO_classification.global), levels(hto_tbl$hash.ID)) %>% unique()
+  colors_hto = colors_clusters[1:length(colors_hto_names)]
+  names(colors_hto) = colors_hto_names
+
+  # visualize pairs of HTO signals
+  hto_facet_plot =
+    ggplot(sample_frac(hto_tbl), aes(x = .panel_x, y = .panel_y, fill = hash.ID, color = hash.ID)) +
+    geom_point(shape = 16, size = 0.2) +
+    geom_autodensity(color = NA, fill = "gray20") +
+    geom_density2d(color = "black", alpha = 0.5) +
+    scale_color_manual(values = colors_hto) +
+    scale_fill_manual(values = colors_hto) +
+    facet_matrix(vars(-cell, -hash.ID, -HTO_classification.global), layer.diag = 2, layer.upper = 3) +
+    guides(color = guide_legend(override.aes = list(size = 5))) +
+    theme(aspect.ratio = 1, legend.title = element_blank(), strip.background = element_blank())
+  save_plot(filename = "qc.hto.correlation.png", plot = hto_facet_plot, base_height = 8, base_width = 10)
+  Sys.sleep(1)
+  save_plot(filename = "qc.hto.correlation.pdf", plot = hto_facet_plot, base_height = 8, base_width = 10)
+  Sys.sleep(1)
+
+  # number of UMIs for singlets, doublets and negative cells
+  hto_umi_plot =
+    VlnPlot(seurat_obj, features = "num_UMIs", group.by = "HTO_classification.global", pt.size = 0.1) +
+    theme(axis.title = element_blank(), plot.title = element_text(hjust = 0.5)) +
+    scale_fill_manual(values = colors_hto) +
+    scale_y_continuous(labels = comma)
+  save_plot("qc.hto.umis.png", plot = hto_umi_plot, base_height = 6, base_width = 6)
+  Sys.sleep(1)
+
+  # number of genes for singlets, doublets and negative cells
+  hto_gene_plot =
+    VlnPlot(seurat_obj, features = "num_genes", group.by = "HTO_classification.global", pt.size = 0.1) +
+    theme(axis.title = element_blank(), plot.title = element_text(hjust = 0.5)) +
+    scale_fill_manual(values = colors_hto) +
+    scale_y_continuous(labels = comma)
+  save_plot("qc.hto.genes.png", plot = hto_gene_plot, base_height = 6, base_width = 6)
+  Sys.sleep(1)
+
+  # number of genes for singlets, doublets and negative cells
+  hto_mito_plot =
+    VlnPlot(seurat_obj, features = "pct_mito", group.by = "HTO_classification.global", pt.size = 0.1) +
+    theme(axis.title = element_blank(), plot.title = element_text(hjust = 0.5)) +
+    scale_fill_manual(values = colors_hto) +
+    scale_y_continuous(labels = comma)
+  save_plot("qc.hto.mito.png", plot = hto_mito_plot, base_height = 6, base_width = 6)
+  Sys.sleep(1)
+
+  group_var = "HTO_classification.global"
+  Idents(seurat_obj) = group_var
+  plot_umap =
+    DimPlot(
+      seurat_obj, reduction = "umap",
+      cells = sample(colnames(seurat_obj)), pt.size = get_dr_point_size(seurat_obj), cols = colors_hto
+    ) +
+    theme(aspect.ratio = 1)
+  save_plot(glue("dr.umap.{group_var}.png"), plot = plot_umap, base_height = 6, base_width = 8)
+  Sys.sleep(1)
+  save_plot(glue("dr.umap.{group_var}.pdf"), plot = plot_umap, base_height = 6, base_width = 8)
+  Sys.sleep(1)
+
+  group_var = "hash.ID"
+  Idents(seurat_obj) = group_var
+  plot_umap =
+    DimPlot(
+      seurat_obj, reduction = "umap",
+      cells = sample(colnames(seurat_obj)), pt.size = get_dr_point_size(seurat_obj), cols = colors_hto
+    ) +
+    theme(aspect.ratio = 1)
+  save_plot(glue("dr.umap.{group_var}.png"), plot = plot_umap, base_height = 6, base_width = 8)
+  Sys.sleep(1)
+  save_plot(glue("dr.umap.{group_var}.pdf"), plot = plot_umap, base_height = 6, base_width = 8)
+  Sys.sleep(1)
+
+  if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
+
+}
+
+# split Seurat object (by sample by default)
+split_seurat_obj = function(seurat_obj, original_wd, split_var = "orig.ident") {
+
+  # set identity to the column used for splitting
+  s_obj = seurat_obj
+  Idents(s_obj) = split_var
+
+  # clean up metadata
+  s_obj@assays$RNA@var.features = vector()
+  s_obj@assays$RNA@scale.data = matrix()
+  s_obj@reductions = list()
+  s_obj@meta.data = s_obj@meta.data %>% select(-starts_with("snn_res"))
+
+  setwd(original_wd)
+
+  # process each split group
+  split_names = Idents(s_obj) %>% as.character() %>% unique() %>% sort()
+  for (s in split_names) {
+
+    message(glue("split: {s}"))
+    split_obj = subset(s_obj, idents = s)
+    message(glue("split {s} cells: {ncol(split_obj)}"))
+    if (ncol(split_obj) > 10) {
+      split_dir = glue("split-{s}")
+      if (dir.exists(split_dir)) {
+        stop(glue("output dir {split_dir} already exists"))
+      } else {
+        dir.create(split_dir)
+        setwd(split_dir)
+        split_obj = calculate_variance(seurat_obj = split_obj, jackstraw_max_cells = 100)
+        Idents(split_obj) = "orig.ident"
+        saveRDS(split_obj, file = "seurat_obj.rds")
+      }
+    }
+
+    # clean up and return to the main dir before processing the next split
+    if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
+    setwd(original_wd)
+
+  }
+
+}
+
 # merge multiple Seurat objects
 combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
 
@@ -460,8 +835,8 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
     seurat_obj_list[[i]]@meta.data = seurat_obj_list[[i]]@meta.data %>% select(-starts_with("snn_res"))
 
     # print single sample sample stats
-    # sample_name = seurat_obj_list[[i]]@meta.data[1, "orig.ident"] %>% as.character()
-    sample_name = seurat_obj_list[[i]]$orig.ident[1] %>% as.character()
+    sample_name = seurat_obj_list[[i]]$orig.ident %>% as.character() %>% sort()
+    sample_name = sample_name[1]
     message(glue("sample {sample_name} dir: {basename(sample_analysis_dir)}"))
     write(glue("sample {sample_name} dir: {basename(sample_analysis_dir)}"), file = "create.log", append = TRUE)
     message(glue("sample {sample_name} cells: {ncol(seurat_obj_list[[i]])}"))
@@ -487,7 +862,13 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
   min_cells = 10
   if (ncol(merged_obj) > 100000) { min_cells = 50 }
   filtered_genes = filtered_genes[filtered_genes >= min_cells] %>% names() %>% sort()
+  # keep all HTO and ADT features if present
+  if ("HTO" %in% names(merged_obj@assays)) { filtered_genes = c(filtered_genes, rownames(merged_obj@assays$HTO)) }
+  if ("ADT" %in% names(merged_obj@assays)) { filtered_genes = c(filtered_genes, rownames(merged_obj@assays$ADT)) }
   merged_obj = subset(merged_obj, features = filtered_genes)
+
+  # encode sample name as factor (also sets alphabetical sample order)
+  merged_obj@meta.data$orig.ident = factor(merged_obj@meta.data$orig.ident)
 
   # print combined sample stats
   message(glue("combined cells: {ncol(merged_obj)}"))
@@ -507,7 +888,7 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
   num_matrix_elements = GetAssayData(merged_obj, assay = "RNA", slot = "counts") %>% length()
   if (num_matrix_elements < 2^31) {
 
-    # save raw counts matrix
+    # save raw counts matrix as a text file
     counts_raw = GetAssayData(merged_obj, assay = "RNA", slot = "counts") %>% as.matrix()
     counts_raw = counts_raw %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
     # write_csv(counts_raw, path = "counts.raw.csv.gz")
@@ -515,7 +896,7 @@ combine_seurat_obj = function(original_wd, sample_analysis_dirs) {
     R.utils::gzip("counts.raw.csv")
     rm(counts_raw)
 
-    # save counts matrix as a basic gzipped text file
+    # save normalized counts matrix as a text file
     counts_norm = GetAssayData(merged_obj, assay = "RNA") %>% as.matrix() %>% round(3)
     counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
     # write_csv(counts_norm, path = "counts.normalized.csv.gz")
@@ -575,8 +956,8 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
   # check if the inputs seems reasonable
   if (length(sample_analysis_dirs) < 2) stop("must have at least 2 samples to merge")
   num_dim = as.integer(num_dim)
-  if (num_dim < 5) stop("too few dims: ", num_dim)
-  if (num_dim > 50) stop("too many dims: ", num_dim)
+  if (num_dim < 5) { stop("too few dims: ", num_dim) }
+  if (num_dim > 50) { stop("too many dims: ", num_dim) }
 
   message("\n\n ========== integrate samples ========== \n\n")
 
@@ -596,8 +977,8 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
 
     # load seurat object
     seurat_obj_list[[i]] = readRDS(sample_seurat_rds)
-    # sample_name = seurat_obj_list[[i]]@meta.data[1, "orig.ident"] %>% as.character()
-    sample_name = seurat_obj_list[[i]]$orig.ident[1] %>% as.character()
+    sample_name = seurat_obj_list[[i]]$orig.ident %>% as.character() %>% sort()
+    sample_name = sample_name[1]
 
     # clean up object
     seurat_obj_list[[i]]@assays$RNA@scale.data = matrix()
@@ -672,7 +1053,13 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
   min_cells = 10
   if (ncol(integrated_obj) > 100000) { min_cells = 50 }
   filtered_genes = filtered_genes[filtered_genes >= min_cells] %>% names() %>% sort()
+  # keep all HTO and ADT features if present
+  if ("HTO" %in% names(integrated_obj@assays)) { filtered_genes = c(filtered_genes, rownames(integrated_obj@assays$HTO)) }
+  if ("ADT" %in% names(integrated_obj@assays)) { filtered_genes = c(filtered_genes, rownames(integrated_obj@assays$ADT)) }
   integrated_obj = subset(integrated_obj, features = filtered_genes)
+
+  # encode sample name as factor (also sets alphabetical sample order)
+  integrated_obj@meta.data$orig.ident = factor(integrated_obj@meta.data$orig.ident)
 
   # print integrated sample stats
   message(glue("integrated cells: {ncol(integrated_obj)}"))
@@ -692,7 +1079,7 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
   num_matrix_elements = GetAssayData(integrated_obj, assay = "RNA", slot = "counts") %>% length()
   if (num_matrix_elements < 2^31) {
 
-    # save raw counts matrix
+    # save raw counts matrix as a text file
     counts_raw = GetAssayData(integrated_obj, assay = "RNA", slot = "counts") %>% as.matrix()
     counts_raw = counts_raw %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
     # write_csv(counts_raw, path = "counts.raw.csv.gz")
@@ -700,19 +1087,13 @@ integrate_seurat_obj = function(original_wd, sample_analysis_dirs, num_dim) {
     R.utils::gzip("counts.raw.csv")
     rm(counts_raw)
 
-    # save normalized counts matrix
+    # save normalized counts matrix as a text file
     counts_norm = GetAssayData(integrated_obj, assay = "RNA") %>% as.matrix() %>% round(3)
     counts_norm = counts_norm %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
     # write_csv(counts_norm, path = "counts.normalized.csv.gz")
     fwrite(counts_norm, file = "counts.normalized.csv", sep = ",")
     R.utils::gzip("counts.normalized.csv")
     rm(counts_norm)
-
-    # save integrated counts matrix
-    # counts_int = GetAssayData(integrated_obj, assay = "integrated") %>% as.matrix() %>% round(3)
-    # counts_int = counts_int %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
-    # write_csv(counts_int, path = "counts.integrated.csv.gz")
-    # rm(counts_int)
 
   }
 
@@ -857,8 +1238,8 @@ calculate_variance_integrated = function(seurat_obj, num_dim, num_neighbors = 30
   s_obj = seurat_obj
 
   num_dim = as.integer(num_dim)
-  if (num_dim < 5) stop("too few dims: ", num_dim)
-  if (num_dim > 50) stop("too many dims: ", num_dim)
+  if (num_dim < 5) { stop("too few dims: ", num_dim) }
+  if (num_dim > 50) { stop("too many dims: ", num_dim) }
 
   message("\n\n ========== Seurat::ScaleData() ========== \n\n")
 
@@ -937,8 +1318,8 @@ get_dr_point_size = function(seurat_obj) {
 calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   # check if number of dimensions seems reasonable
-  if (num_dim < 5) stop("too few dims: ", num_dim)
-  if (num_dim > 50) stop("too many dims: ", num_dim)
+  if (num_dim < 5) { stop("too few dims: ", num_dim) }
+  if (num_dim > 50) { stop("too many dims: ", num_dim) }
 
   s_obj = seurat_obj
 
@@ -994,8 +1375,8 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   # resolutions for graph-based clustering
   # increased resolution values lead to more clusters (recommendation: 0.6-1.2 for 3K cells, 2-4 for 33K cells)
-  res_range = seq(0.1, 2.5, 0.1)
-  if (ncol(s_obj) > 1000) res_range = c(res_range, 3, 4, 5, 6, 7, 8, 9)
+  res_range = seq(0.1, 2.0, 0.1)
+  if (ncol(s_obj) > 1000) res_range = c(res_range, 3, 4, 5, 6, 7, 8, 9, 10)
 
   # algorithm: 1 = original Louvain; 2 = Louvain with multilevel refinement; 3 = SLM
   # identify clusters of cells by SNN modularity optimization based clustering algorithm
@@ -1008,7 +1389,7 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
 
   # create a separate sub-directory for cluster resolution plots
   clusters_dir = "clusters-resolutions"
-  if (!dir.exists(clusters_dir)) dir.create(clusters_dir)
+  if (!dir.exists(clusters_dir)) { dir.create(clusters_dir) }
 
   # for calculated cluster resolutions: remove redundant (same number of clusters), rename, and plot
   res_cols = str_subset(colnames(s_obj@meta.data), "snn_res")
@@ -1224,7 +1605,7 @@ plot_genes = function(seurat_obj, genes, filename_base) {
 
 }
 
-# calculate cluster stats (number of cells, average expression, cell-gene matrix)
+# gather metadata and calculate cluster stats (number of cells)
 calculate_cluster_stats = function(seurat_obj, label) {
 
   message("\n\n ========== calculate cluster stats ========== \n\n")
@@ -1240,8 +1621,9 @@ calculate_cluster_stats = function(seurat_obj, label) {
   cells_metadata = metadata_tbl %>% full_join(tsne_tbl, by = "cell") %>% full_join(umap_tbl, by = "cell")
   cells_metadata = cells_metadata %>% arrange(cell)
   write_excel_csv(cells_metadata, path = glue("metadata.{label}.csv"))
+  Sys.sleep(1)
 
-  # get number of cells split by cluster and by sample
+  # get number of cells split by cluster and by sample (orig.ident)
   summary_cluster_sample =
     cells_metadata %>%
     select(cluster, sample_name) %>%
@@ -1267,26 +1649,37 @@ calculate_cluster_stats = function(seurat_obj, label) {
   # get number of cells split by cluster (ignore samples)
   summary_cluster = summary_cluster_sample %>% select(-contains("sample")) %>% distinct()
   write_excel_csv(summary_cluster, path = glue("summary.{label}.csv"))
-
-  # gene expression for an "average" cell in each identity class (averaging and output are in non-log space)
-  cluster_avg_exp = AverageExpression(seurat_obj, assay = "RNA", verbose = FALSE)[["RNA"]]
-  cluster_avg_exp = cluster_avg_exp %>% round(3) %>% rownames_to_column("gene") %>% arrange(gene)
-  write_excel_csv(cluster_avg_exp, path = glue("expression.mean.{label}.csv"))
-
   Sys.sleep(1)
 
   # export results split by sample if multiple samples are present
   num_samples = cells_metadata %>% pull(sample_name) %>% n_distinct()
   if (num_samples > 1) {
-
-    # number of cells split by cluster and by sample
     write_excel_csv(summary_cluster_sample, path = glue("summary.{label}.per-sample.csv"))
+    Sys.sleep(1)
+  }
 
-    # cluster averages split by sample
+}
+
+# calculate cluster average expression (non-log space)
+calculate_cluster_expression = function(seurat_obj, label) {
+
+  message("\n\n ========== calculate cluster average expression ========== \n\n")
+
+  message("cluster names: ", str_c(levels(seurat_obj), collapse = ", "))
+
+  # gene expression for an "average" cell in each identity class (averaging and output are in non-log space)
+  cluster_avg_exp = AverageExpression(seurat_obj, assay = "RNA", verbose = FALSE)[["RNA"]]
+  cluster_avg_exp = cluster_avg_exp %>% round(3) %>% rownames_to_column("gene") %>% arrange(gene)
+  write_excel_csv(cluster_avg_exp, path = glue("expression.mean.{label}.csv"))
+  Sys.sleep(1)
+
+  # cluster averages split by sample (orig.ident)
+  num_samples = n_distinct(seurat_obj@meta.data$orig.ident)
+  if (num_samples > 1) {
     sample_avg_exp = AverageExpression(seurat_obj, assay = "RNA", add.ident = "orig.ident", verbose = FALSE)[["RNA"]]
     sample_avg_exp = sample_avg_exp %>% round(3) %>% as.data.frame() %>% rownames_to_column("gene") %>% arrange(gene)
     write_excel_csv(sample_avg_exp, path = glue("expression.mean.{label}.per-sample.csv"))
-
+    Sys.sleep(1)
   }
 
 }
@@ -1435,7 +1828,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
   }
 
   # create a separate sub-directory for all markers
-  if (!dir.exists(markers_dir)) dir.create(markers_dir)
+  if (!dir.exists(markers_dir)) { dir.create(markers_dir) }
 
   # filename prefix
   filename_base = glue("{markers_dir}/markers.{label}.{test}")
@@ -1544,7 +1937,7 @@ calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig
 
   # create a separate sub-directory for differential expression results
   de_dir = glue("diff-expression-{group_var}")
-  if (!dir.exists(de_dir)) dir.create(de_dir)
+  if (!dir.exists(de_dir)) { dir.create(de_dir) }
 
   # common settings
   num_de_genes = 50
@@ -1677,6 +2070,9 @@ colors_clusters = c(pal_d3("category10")(10), pal_d3("category20b")(20), pal_igv
 analysis_step = "unknown"
 out_dir = opts$analysis_dir
 
+# original working dir (before moving to analysis dir)
+original_wd = getwd()
+
 # create analysis directory if starting new analysis or exit if analysis already exists
 if (opts$create || opts$combine || opts$integrate) {
 
@@ -1690,9 +2086,6 @@ if (opts$create || opts$combine || opts$integrate) {
   } else {
     dir.create(out_dir)
   }
-
-  # original working dir (before moving to analysis dir)
-  original_wd = getwd()
 
 }
 
@@ -1744,7 +2137,7 @@ if (opts$create) {
 
 } else {
 
-  # all commands besides "create" and "cca" start with an existing seurat object
+  # all commands besides "create", "combine", and "integrate" start with an existing seurat object
   if (file.exists("seurat_obj.rds")) {
 
     message("loading seurat_obj")
@@ -1764,6 +2157,33 @@ if (opts$create) {
     # determine clusters
     seurat_obj = calculate_clusters(seurat_obj, num_dim = as.integer(opts$num_dim))
     saveRDS(seurat_obj, file = "seurat_obj.rds")
+
+  }
+
+  if (opts$adt) {
+
+    analysis_step = "adt"
+    message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
+
+    # add ADT data
+    seurat_obj = add_adt_assay(seurat_obj, sample_name = opts$sample_name, sample_dir = opts$sample_dir)
+    saveRDS(seurat_obj, file = "seurat_obj.rds")
+
+  }
+
+  if (opts$hto) {
+
+    analysis_step = "hto"
+    message(glue("\n\n ========== started analysis step {analysis_step} for {out_dir} ========== \n\n"))
+
+    # add HTO data
+    seurat_obj = add_hto_assay(seurat_obj, sample_name = opts$sample_name, sample_dir = opts$sample_dir)
+    saveRDS(seurat_obj, file = "seurat_obj.rds")
+
+    # split singlets by HTO sample
+    Idents(seurat_obj) = "HTO_classification.global"
+    seurat_obj = subset(seurat_obj, idents = "Singlet")
+    split_seurat_obj(seurat_obj, original_wd = original_wd, split_var = "hash.ID")
 
   }
 
@@ -1792,6 +2212,7 @@ if (opts$create) {
 
       # cluster stat tables (number of cells and average expression)
       calculate_cluster_stats(seurat_obj, label = clust_label)
+      calculate_cluster_expression(seurat_obj, label = clust_label)
 
       # calculate and plot standard cluster markers
       calculate_cluster_markers(seurat_obj, label = clust_label, test = "roc")
