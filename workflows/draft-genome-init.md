@@ -1,7 +1,7 @@
 # Initializing draft genome directory
 
 
-The requirement for [setting up a reference genome directory](https://github.com/igordot/genomics/blob/master/workflows/ref-genome-init.md) is having two basic files:
+The requirement for [setting up a reference genome directory](https://github.com/igordot/reference-genomes) is having two basic files:
 
 * `genome.fa` - genome sequence in FASTA format
 * `genes.gtf` - gene annotations in GTF format
@@ -136,4 +136,4 @@ A few (24 out of over 850,000) of the GTF entries do not contain `gene_id` or `g
 cat genes.ncbi.gff3.gtf | grep "gene_name" > genes.gtf
 ```
 
-This leaves us with a clean `genome.fa` and `genes.gtf` for [setting up a reference genome directory](https://github.com/igordot/genomics/blob/master/workflows/ref-genome-init.md).
+This leaves us with a clean `genome.fa` and `genes.gtf` for [setting up a reference genome directory](https://github.com/igordot/reference-genomes).
