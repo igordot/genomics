@@ -9,6 +9,10 @@
 ## --partition=fn_long --mail-user=${USER}@nyulangone.org --mail-type=END,FAIL,REQUEUE --export=NONE \
 ## --wrap="bash /gpfs/data/igorlab/public/genomics/scripts-bigpurple/assembly-10x-supernova.sh fastq_dir [max_reads]"
 ##
+## optimal number of reads: 56x raw coverage (Supernova will estimate the genome size)
+## number of reads calculator: (genome size) x 56 / 150, assuming reads are 150bp (default is 1,200M for human genome)
+## https://support.10xgenomics.com/de-novo-assembly/guidance/doc/achieving-success-with-de-novo-assembly
+##
 
 
 #########################
