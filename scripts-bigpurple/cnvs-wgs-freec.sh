@@ -2,13 +2,13 @@
 
 
 ##
-## WGS non-paired (without matched normal) copy number variant analysis using Control-FREEC.
+## WGS copy number variant analysis using Control-FREEC (with optional matched normal).
 ## Based on SNS WES version.
 ##
 ## Usage:
 ## sbatch --job-name=cnvs-wgs-${sample} --nodes=1 --ntasks=1 --cpus-per-task=5 --mem=100G --time=5:00:00 \
 ## --mail-user=${USER}@nyulangone.org --mail-type=FAIL,REQUEUE --export=NONE \
-## --wrap="bash ./cnvs-wgs-freec.sh project_dir genome_build sample_name bam [window_size]"
+## --wrap="bash ./cnvs-wgs-freec.sh project_dir genome_build sample_name bam [control_bam] [window_size]"
 ##
 
 
@@ -24,7 +24,7 @@ echo -e "\n ========== SEGMENT: $segment_name ========== \n" >&2
 # check for correct number of arguments
 if [ $# -lt 4 ] ; then
 	echo -e "\n $script_name ERROR: WRONG NUMBER OF ARGUMENTS SUPPLIED \n" >&2
-	echo -e "\n USAGE: $script_name project_dir genome_build tumor_sample_name tumor_bam [window_size] \n" >&2
+	echo -e "\n USAGE: $script_name project_dir genome_build sample_name bam [control_bam] [window_size] \n" >&2
 	exit 1
 fi
 
@@ -33,11 +33,34 @@ proj_dir=$(readlink -f "$1")
 genome_build="$2"
 sample_t="$3"
 bam_t=$(readlink -f "$4")
-win_size="$5"
+bam_n="$5"
+win_size="$6"
 
 
 #########################
 
+
+# check if control sample and/or window size are specified
+
+if [ -n "$win_size" ] ; then
+	# both control sample and window size are specified
+	bam_n=$(readlink -f "$bam_n")
+	win_size_label="paired-${win_size}"
+elif [ -n "$bam_n" ] ; then
+	# either control sample or window size are specified
+	if [ -e "$bam_n" ] ; then
+		bam_n=$(readlink -f "$bam_n")
+		win_size=""
+		win_size_label="paired-auto"
+	else
+		win_size="$bam_n"
+		bam_n=""
+		win_size_label="$win_size"
+	fi
+else
+	# no control sample or window size are specified
+	win_size_label="auto"
+fi
 
 # check that inputs exist
 
@@ -51,6 +74,11 @@ if [ ! -s "$bam_t" ] ; then
 	exit 1
 fi
 
+if [ -n "$bam_n" ] && [ ! -s "$bam_n" ] ; then
+	echo -e "\n $script_name ERROR: CONTROL BAM $bam_n DOES NOT EXIST \n" >&2
+	exit 1
+fi
+
 
 #########################
 
@@ -58,13 +86,6 @@ fi
 # settings and files
 
 sample="${sample_t}"
-
-# resolution-related settings
-if [ -n "$win_size" ] ; then
-	win_size_label="$win_size"
-else
-	win_size_label="auto"
-fi
 
 cnv_freec_dir="${proj_dir}/CNV-FREEC-${win_size_label}"
 mkdir -p "$cnv_freec_dir"
@@ -83,10 +104,11 @@ out_base_sample="${sample_freec_logs_dir}/$(basename $bam_t)"
 fixed_base="${cnv_freec_dir}/${sample_t}"
 
 cpn_sample="${out_base_sample}_sample.cpn"
-# cpn_control="${out_base_control}_control.cpn"
+cpn_control="${out_base_control}_control.cpn"
 
 cnvs_original="${out_base_sample}_CNVs"
 ratio_original="${out_base_sample}_ratio.txt"
+info_original="${out_base_sample}_info.txt"
 
 # repeated later again based on resolution
 cnvs_fixed="${fixed_base}.CNVs.txt"
@@ -124,7 +146,7 @@ fi
 
 if [ -s "$cpn_sample" ] || [ -s "$cnvs_original" ] || [ -s "$cnvs_fixed" ] ; then
 	echo -e "\n $script_name SKIP SAMPLE $sample \n" >&2
-	exit 1
+	exit 0
 fi
 
 
@@ -138,6 +160,19 @@ if [ -n "$win_size" ] ; then
 	win_size_config="window = $win_size"
 else
 	win_size_config="coefficientOfVariation = 0.05"
+fi
+
+# config for control dataset
+
+if [ -n "$bam_n" ] ; then
+control_config="
+[control]
+mateFile = $bam_n
+inputFormat = BAM
+mateOrientation = FR
+"
+else
+	control_config=""
 fi
 
 config_contents="
@@ -220,6 +255,8 @@ inputFormat = BAM
 # 0 (for single ends), RF (Illumina mate-pairs), FR (Illumina paired-ends), FF (SOLiD mate-pairs)
 mateOrientation = FR
 
+$control_config
+
 "
 
 echo "$config_contents" > "$config_txt"
@@ -246,6 +283,8 @@ echo
 echo " * FREEC: $(readlink -f $freec_bin) "
 echo " * sample T : $sample_t "
 echo " * BAM T : $bam_t "
+echo " * BAM N : $bam_n "
+echo " * window size : $win_size "
 echo " * CNVs original: $cnvs_original "
 echo " * CNVs fixed: $cnvs_fixed "
 echo " * ratio original: $ratio_original "
@@ -281,8 +320,11 @@ fi
 # clean up
 
 # delete raw copy number profiles
-rm -fv "$cpn_sample"
-rm -fv "$cpn_control"
+rm -v "$cpn_sample"
+
+if [ -s "$cpn_control" ] ; then
+	rm -v "$cpn_control"
+fi
 
 
 #########################
@@ -291,20 +333,19 @@ rm -fv "$cpn_control"
 # get resolution and add to output names
 
 # get resolution
-res=$(find "$sample_freec_logs_dir" -name "GC_profile*cnp" | head -1)
-res=$(basename "$res")
-res=${res/GC_profile./}
-res=${res/.cnp/}
+res=$(cat "$info_original" | grep "Window" | cut -f 2)
 
 # adjust output file names
 cnvs_fixed="${fixed_base}.${res}.CNVs.txt"
 ratio_fixed="${fixed_base}.${res}.ratio.txt"
 graph_fixed="${fixed_base}.${res}.png"
 
+echo
 echo " * res: $res "
 echo " * CNVs fixed: $cnvs_fixed "
 echo " * ratio fixed: $ratio_fixed "
 echo " * graph fixed: $graph_fixed "
+echo
 
 
 #########################

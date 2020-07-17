@@ -1961,7 +1961,7 @@ calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig
     message("cluster groups: ", paste(levels(clust_obj), collapse = ", "))
 
     # continue if cluster has multiple groups and more than 10 cells in each group
-    if (n_distinct(Idents(clust_obj)) > 1 && min(table(Idents(clust_obj))) > 10) {
+    if (n_distinct(Idents(clust_obj)) > 1 && sum(table(Idents(clust_obj)) > 10) > 1) {
 
       # scale data for heatmap
       clust_obj = ScaleData(clust_obj, assay = "RNA", vars.to.regress = c("num_UMIs", "pct_mito"))
@@ -1973,46 +1973,56 @@ calculate_cluster_de_genes = function(seurat_obj, label, test, group_var = "orig
         # determine combination
         g1 = group_combinations[1, combination_num]
         g2 = group_combinations[2, combination_num]
-        comparison_label = glue("{g1}-vs-{g2}")
-        message(glue("comparison: {clust_name} {g1} vs {g2}"))
 
-        filename_label = glue("{de_dir}/de.{label}-{clust_name}.{comparison_label}.{test}")
+        # make sure that both groups have more than 10 cells
+        if (table(Idents(clust_obj))[[g1]] > 10 && table(Idents(clust_obj))[[g2]] > 10) {
 
-        # find differentially expressed genes (default Wilcoxon rank sum test)
-        de_genes = FindMarkers(clust_obj, ident.1 = g1, ident.2 = g2, assay = "RNA",
-                               test.use = test, logfc.threshold = log(1), min.pct = 0.1, only.pos = FALSE,
-                               print.bar = FALSE)
+          comparison_label = glue("{g1}-vs-{g2}")
+          message(glue("comparison: {clust_name} {g1} vs {g2}"))
 
-        # perform some light filtering and clean up
-        de_genes =
-          de_genes %>%
-          rownames_to_column("gene") %>%
-          mutate(cluster = clust_name, group1 = g1, group2 = g2, de_test = test) %>%
-          select(cluster, group1, group2, de_test, gene, logFC = avg_logFC, p_val, p_val_adj) %>%
-          mutate(
-            logFC = round(logFC, 3),
-            p_val = if_else(p_val < 0.00001, p_val, round(p_val, 5)),
-            p_val_adj = if_else(p_val_adj < 0.00001, p_val_adj, round(p_val_adj, 5))
-          ) %>%
-          arrange(p_val_adj, p_val)
+          filename_label = glue("{de_dir}/de.{label}-{clust_name}.{comparison_label}.{test}")
 
-        message(glue("{comparison_label} num genes: {nrow(de_genes)}"))
+          # find differentially expressed genes (default Wilcoxon rank sum test)
+          de_genes = FindMarkers(clust_obj, ident.1 = g1, ident.2 = g2, assay = "RNA",
+                                test.use = test, logfc.threshold = log(1), min.pct = 0.1,
+                                only.pos = FALSE, print.bar = FALSE)
 
-        # save stats table
-        write_excel_csv(de_genes, path = glue("{filename_label}.csv"))
+          # perform some light filtering and clean up
+          de_genes =
+            de_genes %>%
+            rownames_to_column("gene") %>%
+            mutate(cluster = clust_name, group1 = g1, group2 = g2, de_test = test) %>%
+            select(cluster, group1, group2, de_test, gene, logFC = avg_logFC, p_val, p_val_adj) %>%
+            mutate(
+              logFC = round(logFC, 3),
+              p_val = if_else(p_val < 0.00001, p_val, round(p_val, 5)),
+              p_val_adj = if_else(p_val_adj < 0.00001, p_val_adj, round(p_val_adj, 5))
+            ) %>%
+            arrange(p_val_adj, p_val)
 
-        # add cluster genes to all genes
-        de_all_genes_tbl = bind_rows(de_all_genes_tbl, de_genes)
+          message(glue("{comparison_label} num genes: {nrow(de_genes)}"))
 
-        # heatmap of top genes
-        if (nrow(de_genes) > 5) {
-          top_de_genes = de_genes %>% top_n(num_de_genes, -p_val_adj) %>% arrange(logFC) %>% pull(gene)
-          plot_hm = DoHeatmap(clust_obj, features = top_de_genes, assay = "RNA", slot = "scale.data")
-          heatmap_prefix = glue("{filename_label}.heatmap.top{num_de_genes}")
-          ggsave(glue("{heatmap_prefix}.png"), plot = plot_hm, width = 15, height = 10, units = "in")
-          Sys.sleep(1)
-          ggsave(glue("{heatmap_prefix}.pdf"), plot = plot_hm, width = 15, height = 10, units = "in")
-          Sys.sleep(1)
+          # save stats table
+          write_excel_csv(de_genes, path = glue("{filename_label}.csv"))
+
+          # add cluster genes to all genes
+          de_all_genes_tbl = bind_rows(de_all_genes_tbl, de_genes)
+
+          # heatmap of top genes
+          if (nrow(de_genes) > 5) {
+            top_de_genes = de_genes %>% top_n(num_de_genes, -p_val_adj) %>% arrange(logFC) %>% pull(gene)
+            plot_hm = DoHeatmap(clust_obj, features = top_de_genes, assay = "RNA", slot = "scale.data")
+            heatmap_prefix = glue("{filename_label}.heatmap.top{num_de_genes}")
+            ggsave(glue("{heatmap_prefix}.png"), plot = plot_hm, width = 15, height = 10, units = "in")
+            Sys.sleep(1)
+            ggsave(glue("{heatmap_prefix}.pdf"), plot = plot_hm, width = 15, height = 10, units = "in")
+            Sys.sleep(1)
+          }
+
+        } else {
+
+          message(glue("skip comparison: {clust_name} {g1} vs {g2}"))
+
         }
 
       }
