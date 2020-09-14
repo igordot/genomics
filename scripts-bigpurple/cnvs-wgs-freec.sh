@@ -129,12 +129,26 @@ if [[ "$genome_build" == "hg19" ]] ; then
 	chr_files_dir="/gpfs/data/igorlab/ref/iGenomes/Homo_sapiens/UCSC/hg19/Sequence/Chromosomes/"
 	chr_len_file="/gpfs/data/igorlab/ref/hg19/genome.fa.fai"
 	gem="/gpfs/data/igorlab/ref/hg19/FREEC/out100m2_hg19.gem"
+elif [[ "$genome_build" == "hg38" ]] ; then
+	chr_files_dir="/gpfs/data/igorlab/ref/hg38/chromosomes/"
+	chr_len_file="/gpfs/data/igorlab/ref/hg38/genome.fa.fai"
+	gem="/gpfs/data/igorlab/ref/hg38/genome.len100.mm2.mappability"
 elif [[ "$genome_build" == "mm10" ]] ; then
 	chr_files_dir="/gpfs/data/igorlab/ref/iGenomes/Mus_musculus/UCSC/mm10/Sequence/Chromosomes/"
 	chr_len_file="/gpfs/data/igorlab/ref/mm10/genome.fa.fai"
 	gem="/gpfs/data/igorlab/ref/mm10/FREEC/out100m4_mm10.gem"
 else
 	echo -e "\n $script_name ERROR: UNSUPPORTED GENOME \n" >&2
+	exit 1
+fi
+
+if [ ! -s "$chr_len_file" ] ; then
+	echo -e "\n $script_name ERROR: CHROM LENGTHS $chr_len_file DOES NOT EXIST \n" >&2
+	exit 1
+fi
+
+if [ ! -s "$gem" ] ; then
+	echo -e "\n $script_name ERROR: GEM $gem DOES NOT EXIST \n" >&2
 	exit 1
 fi
 
@@ -276,7 +290,7 @@ module add samtools/1.3
 
 cd "$sample_freec_logs_dir"
 
-freec_dir="/gpfs/data/igorlab/software/FREEC/FREEC-11.5"
+freec_dir="/gpfs/data/igorlab/software/FREEC/FREEC-11.6"
 freec_bin="${freec_dir}/src/freec"
 
 echo

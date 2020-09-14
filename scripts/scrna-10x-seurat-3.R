@@ -740,7 +740,7 @@ plot_hto_qc = function(seurat_obj) {
       seurat_obj, reduction = "umap",
       cells = sample(colnames(seurat_obj)), pt.size = get_dr_point_size(seurat_obj), cols = colors_hto
     ) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   save_plot(glue("dr.umap.{group_var}.png"), plot = plot_umap, base_height = 6, base_width = 8)
   Sys.sleep(1)
   save_plot(glue("dr.umap.{group_var}.pdf"), plot = plot_umap, base_height = 6, base_width = 8)
@@ -753,7 +753,7 @@ plot_hto_qc = function(seurat_obj) {
       seurat_obj, reduction = "umap",
       cells = sample(colnames(seurat_obj)), pt.size = get_dr_point_size(seurat_obj), cols = colors_hto
     ) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   save_plot(glue("dr.umap.{group_var}.png"), plot = plot_umap, base_height = 6, base_width = 8)
   Sys.sleep(1)
   save_plot(glue("dr.umap.{group_var}.pdf"), plot = plot_umap, base_height = 6, base_width = 8)
@@ -1189,7 +1189,7 @@ calculate_variance = function(seurat_obj, jackstraw_max_cells = 10000) {
       s_obj, cells = sample(colnames(s_obj)), group.by = "orig.ident", reduction = "pca",
       pt.size = 0.5, cols = colors_samples
     ) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   ggsave("variance.pca.png", plot = pca_plot, width = 8, height = 6, units = "in")
 
   message("\n\n ========== Seurat::DimHeatmap() ========== \n\n")
@@ -1257,7 +1257,7 @@ calculate_variance_integrated = function(seurat_obj, num_dim, num_neighbors = 30
       s_obj, reduction = "pca", cells = sample(colnames(s_obj)), group.by = "orig.ident",
       pt.size = 0.5, cols = colors_samples
     ) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   ggsave("variance.pca.png", plot = pca_plot, width = 10, height = 6, units = "in")
 
   message("\n\n ========== Seurat::RunTSNE() ========== \n\n")
@@ -1273,7 +1273,7 @@ calculate_variance_integrated = function(seurat_obj, num_dim, num_neighbors = 30
   s_obj = set_identity(seurat_obj = s_obj, group_var = "orig.ident")
   plot_tsne =
     DimPlot(s_obj, reduction = "tsne", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   ggsave(glue("dr.tsne.{num_dim}.sample.png"), plot = plot_tsne, width = 10, height = 6, units = "in")
   Sys.sleep(1)
   ggsave(glue("dr.tsne.{num_dim}.sample.pdf"), plot = plot_tsne, width = 10, height = 6, units = "in")
@@ -1288,7 +1288,7 @@ calculate_variance_integrated = function(seurat_obj, num_dim, num_neighbors = 30
   s_obj = set_identity(seurat_obj = s_obj, group_var = "orig.ident")
   plot_umap =
     DimPlot(s_obj, reduction = "umap", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   ggsave(glue("dr.umap.{num_dim}.sample.png"), plot = plot_umap, width = 10, height = 6, units = "in")
   Sys.sleep(1)
   ggsave(glue("dr.umap.{num_dim}.sample.pdf"), plot = plot_umap, width = 10, height = 6, units = "in")
@@ -1336,7 +1336,7 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
   s_obj = set_identity(seurat_obj = s_obj, group_var = "orig.ident")
   plot_tsne =
     DimPlot(s_obj, reduction = "tsne", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   ggsave(glue("dr.tsne.{num_dim}.sample.png"), plot = plot_tsne, width = 10, height = 6, units = "in")
   Sys.sleep(1)
   ggsave(glue("dr.tsne.{num_dim}.sample.pdf"), plot = plot_tsne, width = 10, height = 6, units = "in")
@@ -1351,7 +1351,7 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
   s_obj = set_identity(seurat_obj = s_obj, group_var = "orig.ident")
   plot_umap =
     DimPlot(s_obj, reduction = "umap", cells = sample(colnames(s_obj)), pt.size = dr_pt_size, cols = colors_samples) +
-    theme(aspect.ratio = 1)
+    theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
   ggsave(glue("dr.umap.{num_dim}.sample.png"), plot = plot_umap, width = 10, height = 6, units = "in")
   Sys.sleep(1)
   ggsave(glue("dr.umap.{num_dim}.sample.pdf"), plot = plot_umap, width = 10, height = 6, units = "in")
@@ -1422,7 +1422,10 @@ calculate_clusters = function(seurat_obj, num_dim, num_neighbors = 30) {
       res_val = sub("snn_res\\.", "", res)
 
       # plot file name
-      res_str = gsub("\\.", "", res)
+      res_str = format(as.numeric(res_val), nsmall = 1)
+      res_str = gsub("\\.", "", res_str)
+      res_str = str_pad(res_str, width = 3, side = "left", pad = "0")
+      res_str = str_c("res", res_str)
       dr_filename = glue("{clusters_dir}/dr.{DefaultAssay(s_obj)}.{num_dim}.{res_str}.clust{res_num_clusters_cur}")
 
       s_obj = plot_clusters(seurat_obj = s_obj, resolution = res_val, filename_base = dr_filename)
@@ -1485,7 +1488,7 @@ plot_clusters = function(seurat_obj, resolution, filename_base) {
         s_obj, reduction = "tsne", cells = sample(colnames(s_obj)),
         pt.size = get_dr_point_size(s_obj), cols = colors_clusters
       ) +
-      theme(aspect.ratio = 1)
+      theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
     ggsave(glue("{filename_base}.tsne.png"), plot = plot_tsne, width = 9, height = 6, units = "in")
     Sys.sleep(1)
     ggsave(glue("{filename_base}.tsne.pdf"), plot = plot_tsne, width = 9, height = 6, units = "in")
@@ -1496,7 +1499,7 @@ plot_clusters = function(seurat_obj, resolution, filename_base) {
         s_obj, reduction = "umap", cells = sample(colnames(s_obj)),
         pt.size = get_dr_point_size(s_obj), cols = colors_clusters
       ) +
-      theme(aspect.ratio = 1)
+      theme(aspect.ratio = 1, axis.ticks = element_blank(), axis.text = element_blank())
     ggsave(glue("{filename_base}.umap.png"), plot = plot_umap, width = 9, height = 6, units = "in")
     Sys.sleep(1)
     ggsave(glue("{filename_base}.umap.pdf"), plot = plot_umap, width = 9, height = 6, units = "in")
@@ -1716,8 +1719,8 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
       capture.output({
         all_markers =
           FindAllMarkers(
-            seurat_obj, assay = "RNA", test.use = test, logfc.threshold = log(1.2), min.pct = 0.2,
-            only.pos = FALSE, min.diff.pct = -Inf, verbose = FALSE
+            seurat_obj, assay = "RNA", test.use = test, logfc.threshold = log(1.2), min.pct = 0.1,
+            only.pos = TRUE, min.diff.pct = -Inf, verbose = FALSE
           )
       }, type = "message")
 
@@ -1774,7 +1777,7 @@ calculate_cluster_markers = function(seurat_obj, label, test, pairwise = FALSE) 
             cur_markers =
               FindMarkers(
                 seurat_obj, assay = "RNA", ident.1 = cluster1, ident.2 = cluster2, test.use = test,
-                logfc.threshold = log(1.1), min.pct = 0.1,
+                logfc.threshold = 0, min.pct = 0.1,
                 only.pos = TRUE, min.diff.pct = -Inf, verbose = FALSE
               )
           }, type = "message")
@@ -2225,15 +2228,15 @@ if (opts$create) {
       calculate_cluster_expression(seurat_obj, label = clust_label)
 
       # calculate and plot standard cluster markers
-      calculate_cluster_markers(seurat_obj, label = clust_label, test = "roc")
+      # calculate_cluster_markers(seurat_obj, label = clust_label, test = "roc")
       calculate_cluster_markers(seurat_obj, label = clust_label, test = "wilcox")
-      calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST")
+      # calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST")
 
       # calculate and plot pairwise cluster markers (very slow, so skip for high number of clusters)
       num_clusters = Idents(seurat_obj) %>% as.character() %>% n_distinct()
       if (num_clusters < 20) {
         calculate_cluster_markers(seurat_obj, label = clust_label, test = "wilcox", pairwise = TRUE)
-        calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST", pairwise = TRUE)
+        # calculate_cluster_markers(seurat_obj, label = clust_label, test = "MAST", pairwise = TRUE)
       }
 
     }
