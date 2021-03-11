@@ -1,5 +1,5 @@
 ##
-## minfi wrapper functions to help streamline the analysis
+## minfi wrapper functions to streamline the analysis of methylation microarrays
 ##
 
 
@@ -7,17 +7,19 @@
 options(width = 120)
 # print warnings as they occur
 options(warn = 1)
+# default type for the bitmap devices such as png (should default to "cairo")
+options(bitmapType = "cairo")
 
 # dependencies
-suppressPackageStartupMessages(library(magrittr))
-suppressPackageStartupMessages(library(minfi))
-suppressPackageStartupMessages(library(RColorBrewer))
-suppressPackageStartupMessages(library(dplyr))
-suppressPackageStartupMessages(library(tibble))
-suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(minfi)
+  library(RColorBrewer)
+  library(ggsci)
+})
 
 # color scale for plots
-plot_colors = c(brewer.pal(9, "Set1"), brewer.pal(8, "Accent"), brewer.pal(8, "Dark2"))
+plot_colors = c(brewer.pal(5, "Set1"), brewer.pal(8, "Dark2"), pal_igv("default")(51))
 
 # import data and generate some qc plots
 load_data = function(sample_sheet) {
@@ -26,24 +28,23 @@ load_data = function(sample_sheet) {
   if (!file.exists(sample_sheet)) stop("sample sheet ", sample_sheet, " does not exist")
 
   # import sample sheet
-  targets = read.csv(sample_sheet, strip.white = TRUE, stringsAsFactors = FALSE)
-  targets[targets == ""] = "."
+  samples_tbl = read_csv(sample_sheet)
 
   # sample sheet needs to have "Basename" and "Sentrix_ID" for minfi
-  if (!("Basename" %in% colnames(targets))) stop("sample sheet must contain \"Basename\" column")
-  if (!("Sentrix_ID" %in% colnames(targets))) stop("sample sheet must contain \"Sentrix_ID\" column")
+  if (!("Basename" %in% colnames(samples_tbl))) stop("sample sheet must contain \"Basename\" column")
+  if (!("Sentrix_ID" %in% colnames(samples_tbl))) stop("sample sheet must contain \"Sentrix_ID\" column")
 
   # sample sheet needs to have "Sample" and "Condition" for this workflow
-  if (!("Sample" %in% colnames(targets))) stop("sample sheet must contain \"Sample\" column")
-  if (!("Condition" %in% colnames(targets))) stop("sample sheet must contain \"Condition\" column")
+  if (!("Sample" %in% colnames(samples_tbl))) stop("sample sheet must contain \"Sample\" column")
+  if (!("Condition" %in% colnames(samples_tbl))) stop("sample sheet must contain \"Condition\" column")
 
   # add array ID based on basename (to check for batch effects, for example)
-  targets$Array = gsub(".*/([0-9]*)_R[0-9][0-9]C[0-9][0-9]", "\\1", targets$Basename)
+  samples_tbl$Array = gsub(".*/([0-9]*)_R[0-9][0-9]C[0-9][0-9]", "\\1", samples_tbl$Basename)
 
-  message("\n\n ========== minfi::read.metharray.exp() ========== \n\n")
+  message("\n\n ===== minfi::read.metharray.exp() ===== \n\n")
 
   # red and green channel measurements of the samples (combine() combines two sets of samples)
-  raw_set = read.metharray.exp(targets = targets, recursive = TRUE, verbose = TRUE)
+  raw_set = read.metharray.exp(targets = samples_tbl, recursive = TRUE, verbose = FALSE)
 
   # check that sample names and pData are in the same order (probably not necessary)
   if (!(identical(sampleNames(raw_set), sub(".*/", "", pData(raw_set)$Basename)))) stop("sample names not identical")
@@ -57,9 +58,9 @@ load_data = function(sample_sheet) {
 
   # show conditions
   message("samples per condition: ")
-  raw_set$Condition %>% table(useNA = "always") %>% print
+  raw_set$Condition %>% table(useNA = "ifany") %>% print()
 
-  message("\n\n ========== minfi::read.qcReport() ========== \n\n")
+  message("\n\n ===== minfi::read.qcReport() ===== \n\n")
 
   # PDF QC report of the most common plots
   qcReport(raw_set, sampGroups=pData(raw_set)$Condition, pdf="plot.qcreport.pdf")
@@ -72,20 +73,24 @@ load_data = function(sample_sheet) {
     densityPlot(raw_set, sampGroups = pData(raw_set)$Array, pal = plot_colors)
   dev.off()
 
-  message("\n\n ========== minfi::detectionP() ========== \n\n")
+  # delete Rplots.pdf
+  if (file.exists("Rplots.pdf")) file.remove("Rplots.pdf")
+
+  message("\n\n ===== minfi::detectionP() ===== \n\n")
 
   # identify failed positions
   det_p = detectionP(raw_set)
 
   # save detection stats
-  det_p_summary = tibble(
-    sample = colnames(det_p),
-    detected_positions = colSums(det_p < 0.01),
-    failed_positions = colSums(det_p >= 0.01),
-    failed_positions_pct = round(colMeans(det_p > 0.01), digits = 3)
-    )
-  det_p_summary = det_p_summary %>% arrange(-failed_positions)
-  det_p_summary = det_p_summary %>% mutate(failed_positions_pct = failed_positions_pct * 100)
+  det_p_summary =
+    tibble(
+      sample = colnames(det_p),
+      detected_positions = colSums(det_p < 0.01),
+      failed_positions = colSums(det_p >= 0.01),
+      failed_positions_pct = round(colMeans(det_p > 0.01), digits = 3)
+    ) %>%
+    arrange(-failed_positions) %>%
+    mutate(failed_positions_pct = failed_positions_pct * 100)
   write_csv(det_p_summary, "summary.detection.csv")
 
   return(raw_set)
@@ -99,7 +104,7 @@ normalize_data = function(raw_channel_set) {
   # Noob: preprocessNoob() -> MethylSet -> mapToGenome() -> GenomicMethylSet - > ratioConvert() -> GenomicRatioSet
   # may not be necessary to convert to GenomicRatioSet, getBeta() works with both
 
-  message("\n\n ========== minfi::preprocessRaw() ========== \n\n")
+  message("\n\n ===== minfi::preprocessRaw() ===== \n\n")
 
   mset = preprocessRaw(raw_channel_set)
 
@@ -113,19 +118,21 @@ normalize_data = function(raw_channel_set) {
   # worst samples (median intensity < 10.5 is failing by default)
   # qc[qc[,"mMed"] < 10.5 | qc[,"uMed"] < 10.5,]
 
-  message("\n\n ========== minfi::preprocessFunnorm() ========== \n\n")
+  message("\n\n ===== minfi::preprocessFunnorm() ===== \n\n")
 
   # functional normalization (FunNorm) - produces GenomicRatioSet
-  norm_set = preprocessFunnorm(raw_set)
+  norm_set = preprocessFunnorm(raw_set, bgCorr = TRUE, dyeCorr = TRUE)
   # class(norm_set)
-  # norm_set
   write(paste0("total probes: ", nrow(norm_set)), file = "norm.log", append = TRUE)
 
   # identify failed positions
   det_p = detectionP(raw_set)
 
+  # keep only probes that pass through preprocessFunnorm()
+  det_p = det_p[intersect(rownames(det_p), rownames(norm_set)), ]
+
   # probes detected in at least 90% of the samples
-  # normSet = normSet[rowSums(det_p < 0.01) > ncol(det_p)*0.9,]
+  # normSet = normSet[rowSums(det_p < 0.01) > ncol(det_p) * 0.9, ]
   # probes detected in all samples
   norm_set = norm_set[rowSums(det_p < 0.01) == ncol(det_p), ]
   write(paste0("detected probes: ", nrow(norm_set)), file = "norm.log", append = TRUE)
@@ -134,7 +141,6 @@ normalize_data = function(raw_channel_set) {
   norm_set = addSnpInfo(norm_set)
   # head(granges(norm_set))
   norm_set = dropLociWithSnps(norm_set, snps = c("SBE","CpG"), maf = 0)
-  # norm_set
   write(paste0("non-SNP probes: ", nrow(norm_set)), file = "norm.log", append = TRUE)
 
   # sex prediction plot
@@ -144,6 +150,17 @@ normalize_data = function(raw_channel_set) {
 
   # annotation
   annot = getAnnotation(norm_set)
+
+  # remove extra annotation columns and save
+  annot_tbl = annot %>% as_tibble(rownames = "probe") %>% arrange(probe)
+  remove_cols = c(
+    "AddressA", "AddressB", "ProbeSeqA", "ProbeSeqB", "NextBase", "Color", "Forward_Sequence", "SourceSeq",
+    "Probe_rs", "CpG_rs", "SBE_rs","Probe_maf", "CpG_maf", "SBE_maf", "Islands_Name", "UCSC_RefGene_Accession",
+    "GencodeBasicV12_NAME", "GencodeBasicV12_Accession", "GencodeBasicV12_Group", "GencodeCompV12_Accession",
+    "DNase_Hypersensitivity_NAME", "OpenChromatin_NAME", "Methyl27_Loci", "Methyl450_Loci", "Random_Loci")
+  annot_tbl = annot_tbl %>% dplyr::select(!any_of(remove_cols))
+  write_csv(head(annot_tbl, 100), "annot.head100.csv")
+  write_csv(annot_tbl, "annot.csv.gz")
 
   # remove sex probes
   sex_probes = annot$Name[annot$chr %in% c("chrX", "chrY")]
@@ -156,7 +173,7 @@ normalize_data = function(raw_channel_set) {
     densityPlot(beta, sampGroups = pData(norm_set)$Condition, pal = plot_colors)
   dev.off()
 
-  # mds plots (must be an 'RGChannelSet', a 'MethylSet'  or matrix)
+  # MDS plots (must be an 'RGChannelSet', a 'MethylSet'  or matrix)
 
   png("plot.mds.raw.condition.png", width = 8, height = 8, units = "in", res = 300)
     mdsPlot(raw_set, numPositions = 10000, sampNames = sampleNames(raw_set), sampGroups = pData(raw_set)$Condition,
@@ -172,6 +189,12 @@ normalize_data = function(raw_channel_set) {
     mdsPlot(beta, numPositions = 10000, sampNames = sampleNames(norm_set), sampGroups = pData(norm_set)$Array,
             legendPos = "topright", legendNCol = 1, pal = plot_colors)
   dev.off()
+
+  # save beta values
+  beta = getBeta(norm_set)
+  beta_tbl = beta %>% round(3) %>% as_tibble(rownames = "probe") %>% arrange(probe)
+  write_csv(head(beta_tbl, 100), "beta.head100.csv")
+  write_csv(beta_tbl, "beta.csv.gz")
 
   return(norm_set)
 
