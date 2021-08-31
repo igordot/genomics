@@ -17,21 +17,24 @@ Options:
 ' -> doc
 
 
-# output width
+# increase output width
 options(width = 120)
 # print warnings as they occur
 options(warn = 1)
 
 # retrieve the command-line arguments
-suppressPackageStartupMessages(library(docopt))
+library(docopt)
 opts = docopt(doc)
 
 # relevent arguments
 in_dir = opts$in_dir
 out_dir = opts$out_dir
 
+# check if the input parameters are valid
 message("input dir: ", in_dir)
+if (!dir.exists(in_dir)) { stop("input dir does not exist") }
 message("output dir: ", out_dir)
+if (dir.exists(out_dir)) { stop("output dir already exists") }
 
 # load libraries
 suppressPackageStartupMessages({
@@ -41,17 +44,8 @@ suppressPackageStartupMessages({
   library(DropletUtils)
 })
 
-# check if the input dir is valid
-if (!dir.exists(in_dir)) { stop(glue("input dir {in_dir} does not exist")) }
-
-# create the output dir if it does not exist
-if (dir.exists(out_dir)) {
-  stop(glue("output dir {out_dir} already exists"))
-} else {
-  dir.create(out_dir)
-}
-
 # set output directory as working directory
+dir.create(out_dir)
 if (dir.exists(out_dir)) {
   setwd(out_dir)
 } else {

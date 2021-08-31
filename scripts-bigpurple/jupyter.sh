@@ -18,6 +18,22 @@
 #########################
 
 
+# check that Jupyter notebook is available
+
+if [ ! -x "$(command -v jupyter)" ] ; then
+	echo -e "\n ERROR: 'jupyter' is not available \n" >&2
+	exit 1
+fi
+
+if [ ! -x "$(command -v jupyter-notebook)" ] ; then
+	echo -e "\n ERROR: 'jupyter-notebook' is not available \n" >&2
+	exit 1
+fi
+
+
+#########################
+
+
 # https://docs.ycrc.yale.edu/clusters-at-yale/guides/jupyter/
 # originally modified for use on BigPurple by Paul Glick
 
@@ -47,3 +63,10 @@ Two additional steps should be perfomed on a local machine.
 
 # jupyter
 jupyter-notebook --no-browser --port=${port} --ip=${node}
+
+
+#########################
+
+
+
+# end
