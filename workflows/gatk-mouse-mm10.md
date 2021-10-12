@@ -37,33 +37,41 @@ for vcf in $(ls -1 vcf_chr_*.vcf) ; do
   vcf_file_string="$vcf_file_string -V $vcf"
 done
 echo $vcf_file_string
-
-# concatenate VCF files
-java -Xms16G -Xmx16G -cp ${gatk_path}/GenomeAnalysisTK.jar org.broadinstitute.gatk.tools.CatVariants \
--R genome.fa $vcf_file_string -out dbsnp.vcf
 ```
+
+For the `MergeVcfs` script to work it needs a dictonary of the reference genom. This must be done with
+
+```bash
+picard CreateSequenceDictionary R=genome.fa O=mm10.dict
+```
+
+```bash
+# concatenate VCF files
+picard MergeVcfs $vcf_file_string O=output_variants.vcf.gz D=/home/yeroslaviz/projects/Guru/WES_b2m/reference/mm10/mm10.dict
+```
+
 
 More recent dbSNP releases include a merged `00-All.vcf.gz` file in addition to the separate chromosome files.
 Although it will not need to be concatenated, it will likely still need to be adjusted for GATK compatibility.
 
 For mouse indels, the Sanger Mouse Genetics Programme (Sanger MGP) is probably the best resource.
 
-Download all MGP indels (5/2015 release):
+Download all MGP indels (6/2018 release):
 
 ```bash
-wget ftp://ftp-mouse.sanger.ac.uk/REL-1505-SNPs_Indels/mgp.v5.merged.indels.dbSNP142.normed.vcf.gz \
--O mgp.v5.indels.vcf.gz
+wget ftp://ftp-mouse.sanger.ac.uk/REL-1807-SNPs_Indels/mgp.v6.merged.norm.snp.indels.sfiltered.vcf.gz \
+-O mgp.v6.indels.vcf.gz
 ```
 
 Filter for passing variants with chr added:
 
 ```bash
 # adjust header
-zcat mgp.v5.indels.vcf.gz | head -1000 | grep "^#" | cut -f 1-8 \
+zcat mgp.v6.indels.vcf.gz | head -1000 | grep "^#" | cut -f 1-8 \
 | grep -v "#contig" | grep -v "#source" \
 > mgp.v5.indels.pass.chr.vcf
 # keep only passing and adjust chromosome name
-zcat mgp.v5.indels.vcf.gz | grep -v "^#" | cut -f 1-8 \
+zcat mgp.v6.indels.vcf.gz | grep -v "^#" | cut -f 1-8 \
 | grep -w "PASS" | sed 's/^\([0-9MXY]\)/chr\1/' \
 >> mgp.v5.indels.pass.chr.vcf
 ```
@@ -71,10 +79,10 @@ zcat mgp.v5.indels.vcf.gz | grep -v "^#" | cut -f 1-8 \
 Sort VCF (automatically generated index has to be deleted due to a known bug):
 
 ```bash
-java -Xms16G -Xmx16G -jar ${PICARD_ROOT}/picard.jar SortVcf VERBOSITY=WARNING \
-SD=genome.dict \
-I=mgp.v5.indels.pass.chr.vcf \
-O=mgp.v5.indels.pass.chr.sort.vcf
+picard SortVcf VERBOSITY=WARNING \
+# SD=/mm10.dict # is not needed anymore.\
+I=mgp.v6.indels.pass.chr.vcf \
+O=mgp.v6.indels.pass.chr.sort.vcf
 rm -fv mgp.v5.indels.pass.chr.sort.vcf.idx
 ```
 
