@@ -61,8 +61,11 @@ Two additional steps should be perfomed on a local machine.
 # module purge
 # module add default-environment
 
-# jupyter
-jupyter-notebook --no-browser --port=${port} --ip=${node}
+# classic Jupyter Notebook
+# jupyter-notebook --no-browser --port=${port} --ip=${node}
+
+# JupyterLab
+jupyter lab --no-browser --port=${port} --ip=${node}
 
 
 #########################
