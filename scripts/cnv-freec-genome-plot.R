@@ -41,8 +41,8 @@ if (!file.exists(ratio_txt)) stop("file does not exist: ", ratio_txt)
 
 # load libraries
 suppressPackageStartupMessages({
-  library(magrittr)
-  library(tidyverse)
+  library(dplyr)
+  library(readr)
   library(karyoploteR)
   library(scales)
 })
@@ -50,17 +50,17 @@ suppressPackageStartupMessages({
 # ploidy
 ploidy = 2
 # maximum copy number level to plot (to avoid very high values)
-max_cn = 8
+max_cn = 6
 
 # import ratio table, remove uncertain regions, and cap copy numbers at defined maximum value
 ratio =
-  read_tsv(ratio_txt, guess_max = 999999, progress = FALSE) %>%
-  filter(CopyNumber >= 0) %>%
-  mutate(chr = Chromosome, start = Start, end = Start) %>%
-  mutate(Ratio = Ratio * ploidy) %>%
-  mutate(CopyNumber = ifelse(CopyNumber > max_cn, max_cn, CopyNumber)) %>%
-  mutate(Ratio = ifelse(Ratio > max_cn, max_cn, Ratio)) %>%
-  select(chr, start, end, Ratio, CopyNumber)
+  read_tsv(ratio_txt, guess_max = 999999, show_col_types = FALSE, progress = FALSE) %>%
+  dplyr::filter(CopyNumber >= 0) %>%
+  dplyr::mutate(chr = Chromosome, start = Start, end = Start) %>%
+  dplyr::mutate(Ratio = Ratio * ploidy) %>%
+  dplyr::mutate(CopyNumber = ifelse(CopyNumber > max_cn, max_cn, CopyNumber)) %>%
+  dplyr::mutate(Ratio = ifelse(Ratio > max_cn, max_cn, Ratio)) %>%
+  dplyr::select(chr, start, end, Ratio, CopyNumber)
 
 # convert ratio table to GRanges
 ratio_gr = GRanges(ratio)
@@ -79,7 +79,7 @@ pp$data1inmargin = 0
 pp$bottommargin = 50
 pp$ideogramheight = 20
 kp =
-  plotKaryotype(genome = genome, plot.type = 4, ideogram.plotter = NULL, labels.plotter = NULL, plot.params = pp) %>%
+  plotKaryotype(genome = genome, plot.type = 4, ideogram.plotter = NULL, labels.plotter = NULL, plot.params = pp, main = sample_name) %>%
   kpAxis(ymin = 0, ymax = max_cn, tick.pos = 0:max_cn) %>%
   kpAddCytobandsAsLine() %>%
   kpAddChromosomeNames(srt = 45) %>%
@@ -90,8 +90,7 @@ kp =
   kpPoints(data = ratio_del, y = ratio_del$Ratio,
            cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("royalblue4", 0.3)) %>%
   kpPoints(data = ratio_gr, y = ratio_gr$CopyNumber,
-           cex = 0.5, ymin = 0, ymax = max_cn, col = "black") %>%
-  kpAddMainTitle(sample_name)
+           cex = 0.5, ymin = 0, ymax = max_cn, col = "gray20")
 dev.off()
 
 
