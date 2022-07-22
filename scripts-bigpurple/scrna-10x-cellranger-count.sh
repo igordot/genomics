@@ -2,8 +2,9 @@
 
 
 ##
-## 10X Cell Ranger
-## Processes Chromium single-cell RNA-seq output (cellranger count)
+## Processes 10x Genomics Chromium single-cell RNA-seq FASTQs with Cell Ranger (cellranger count).
+## Provide a FASTQ directory for classic expression libraries.
+## Provide tables of libraries and features for expression and antibody/hashtag libraries.
 ##
 ## Usage:
 ## sbatch --job-name=cellranger-${sample} --ntasks=1 --cpus-per-task=17 --mem=128G --time=10:00:00 \
@@ -16,9 +17,16 @@
 script_name=$(basename "${BASH_SOURCE[0]}")
 
 # check for correct number of arguments
-if [ ! $# == 4 ] ; then
+if [ $# -lt 4 ] ; then
 	echo -e "\n $script_name ERROR: WRONG NUMBER OF ARGUMENTS SUPPLIED \n" >&2
-	echo -e "\n USAGE: $script_name module_version genome_name sample_name fastq_dir \n" >&2
+	echo -e " Usage:" >&2
+	echo -e "" >&2
+	echo -e "   RNA only:        ./${script_name} module_version genome_name sample_name fastq_dir" >&2
+	echo -e "   RNA and ADT/HTO: ./${script_name} module_version genome_name sample_name libraries_csv features_csv" >&2
+	echo -e "" >&2
+	echo -e "   RNA example:         ./${script_name} 7.0.0 hg38 my_sample /gpfs/data/fastq" >&2
+	echo -e "" >&2
+	if [ $# -gt 0 ] ; then echo -e " Provided arguments: $* \n" >&2 ; fi
 	exit 1
 fi
 
@@ -27,7 +35,13 @@ module_version=$1
 genome_name=$2
 sample_name_fastq=$3
 sample_name_out="count-$sample_name_fastq"
-fastq_dir=$(readlink -f "$4")
+if [ $# -eq 4 ] ; then
+	fastq_dir=$(readlink -f "$4")
+fi
+if [ $# -eq 5 ] ; then
+	libraries_csv=$(readlink -f "$4")
+	features_csv=$(readlink -f "$5")
+fi
 
 # settings (16 threads and 64G does not finish with 10h time limit)
 threads=16
@@ -47,21 +61,36 @@ elif [[ "$genome_name" == "mm10" ]] ; then
 elif [[ "$genome_name" == "GRCh38_and_mm10" ]] ; then
 	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-and-mm10-2020-A"
 else
-	#transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/ref/${genome_name}/cellranger"
+	# transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/ref/${genome_name}/cellranger"
 	transcriptome_dir="/gpfs/data/igorlab/ref/${genome_name}/cellranger"
 fi
 
 # check that input exists
-if [ ! -d "$fastq_dir" ] ; then
-	echo -e "\n ERROR: fastq dir $fastq_dir does not exist \n" >&2
-	exit 1
-fi
 
 if [ ! -d "$transcriptome_dir" ] ; then
 	echo -e "\n ERROR: genome dir $transcriptome_dir does not exist \n" >&2
 	exit 1
 fi
 
+if [ -n "$fastq_dir" ] ; then
+	# RNA-only command
+	if [ ! -d "$fastq_dir" ] ; then
+		echo -e "\n ERROR: fastq dir $fastq_dir does not exist \n" >&2
+		exit 1
+	fi
+else
+	# RNA and ADT command
+	if [ ! -s "$libraries_csv" ] ; then
+		echo -e "\n ERROR: libraries csv $libraries_csv does not exist \n" >&2
+		exit 1
+	fi
+	if [ ! -s "$features_csv" ] ; then
+		echo -e "\n ERROR: features csv $features_csv does not exist \n" >&2
+		exit 1
+	fi
+fi
+
+# clean up the environment
 module purge
 module add default-environment
 module add cellranger/${module_version}
@@ -71,31 +100,39 @@ echo " * cellranger:        $(which cellranger) "
 echo " * threads:           $threads "
 echo " * mem:               $mem "
 echo " * transcriptome dir: $transcriptome_dir "
-echo " * fastq dir:         $fastq_dir "
-echo " * sample:            $sample_name_fastq "
 echo " * out dir:           $sample_name_out "
+if [ -n "$fastq_dir" ] ; then
+	echo " * sample name:       $sample_name_fastq "
+	echo " * fastq dir:         $fastq_dir "
+	extra_args="--sample $sample_name_fastq --fastqs $fastq_dir"
+else
+	echo " * libraries csv:     $libraries_csv "
+	echo " * features csv:      $features_csv "
+	extra_args="--libraries $libraries_csv --feature-ref $features_csv"
+fi
 
 echo -e "\n $(date) \n" >&2
 
 # cellranger count command
 
-# id             A unique run id and output folder name [a-zA-Z0-9_-]+
-# fastqs         Path of folder created by 10x demultiplexing or bcl2fastq
-# sample         Prefix of the filenames of FASTQs to select
 # transcriptome  Path of folder containing 10x-compatible transcriptome reference
+# id             A unique run id and output folder name [a-zA-Z0-9_-]+
+# sample         Prefix of the filenames of FASTQs to select
+# fastqs         Path of folder created by 10x demultiplexing or bcl2fastq
+# libraries      CSV file declaring input library data sources
+# feature-ref    Feature reference CSV file, declaring Feature Barcode constructs and associated barcodes
 
 cellranger_cmd="
 cellranger count \
 --localmem $mem \
 --localcores $threads \
 --transcriptome $transcriptome_dir \
---fastqs $fastq_dir \
---sample $sample_name_fastq \
 --id $sample_name_out \
+$extra_args \
 --disable-ui \
 "
 echo -e "\n CMD: $cellranger_cmd \n"
-$cellranger_cmd
+eval "$cellranger_cmd"
 
 sleep 15
 
