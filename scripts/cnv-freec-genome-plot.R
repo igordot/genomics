@@ -23,8 +23,6 @@ Options:
 options(width = 120)
 # print warnings as they occur
 options(warn = 1)
-# default type for the bitmap devices such as png (should default to "cairo")
-options(bitmapType = "cairo")
 
 # retrieve the command-line arguments
 suppressPackageStartupMessages(library(docopt))
@@ -78,19 +76,22 @@ pp = getDefaultPlotParams(plot.type = 4)
 pp$data1inmargin = 0
 pp$bottommargin = 50
 pp$ideogramheight = 20
-kp =
-  plotKaryotype(genome = genome, plot.type = 4, ideogram.plotter = NULL, labels.plotter = NULL, plot.params = pp, main = sample_name) %>%
-  kpAxis(ymin = 0, ymax = max_cn, tick.pos = 0:max_cn) %>%
-  kpAddCytobandsAsLine() %>%
-  kpAddChromosomeNames(srt = 45) %>%
-  kpPoints(data = ratio_norm, y = ratio_norm$Ratio,
-           cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("darkolivegreen2", 0.3)) %>%
-  kpPoints(data = ratio_amp, y = ratio_amp$Ratio,
-           cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("firebrick2", 0.3)) %>%
-  kpPoints(data = ratio_del, y = ratio_del$Ratio,
-           cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("royalblue4", 0.3)) %>%
-  kpPoints(data = ratio_gr, y = ratio_gr$CopyNumber,
-           cex = 0.5, ymin = 0, ymax = max_cn, col = "gray20")
+kp = plotKaryotype(genome = genome, plot.type = 4, ideogram.plotter = NULL, labels.plotter = NULL, plot.params = pp, main = sample_name)
+kp = kpAxis(kp, ymin = 0, ymax = max_cn, tick.pos = 0:max_cn)
+kp = kpAddCytobandsAsLine(kp)
+kp = kpAddChromosomeNames(kp, srt = 45)
+kp = kpPoints(kp, data = ratio_norm, y = ratio_norm$Ratio,
+  cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("darkolivegreen2", 0.3))
+if (length(ratio_amp) > 0) {
+  kp = kpPoints(kp, data = ratio_amp, y = ratio_amp$Ratio,
+    cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("firebrick2", 0.3))
+}
+if (length(ratio_del) > 0) {
+  kp = kpPoints(kp, data = ratio_del, y = ratio_del$Ratio,
+    cex = 0.3, ymin = 0, ymax = max_cn, col = alpha("royalblue4", 0.3))
+}
+kp = kpPoints(kp, data = ratio_gr, y = ratio_gr$CopyNumber,
+  cex = 0.5, ymin = 0, ymax = max_cn, col = "gray20")
 dev.off()
 
 
