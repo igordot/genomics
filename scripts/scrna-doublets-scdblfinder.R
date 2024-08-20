@@ -63,11 +63,39 @@ sce = Seurat::as.SingleCellExperiment(seurat_obj, assay = "RNA")
 sce = scran::computeSumFactors(sce, BPPARAM = BiocParallel::MulticoreParam(4))
 
 set.seed(99)
-# with one sample, using the "samples" parameter does not return a table
-if (n_distinct(seurat_obj@meta.data$orig.ident) > 1) {
+if (all(c("hash.ID", "HTO_classification.global") %in% names(seurat_obj@meta.data))) {
+  # hashed multi-sample experiment
+  # samples are independent captures, not biological samples, if multiplexed using cell hashes
+  if ("library" %in% names(seurat_obj@meta.data)) {
+    if ("Doublet" %in% seurat_obj@meta.data$HTO_classification.global) {
+      message("library/batch: library with known doublets")
+      known_doublets = sce$HTO_classification.global == "Doublet"
+    } else {
+      message("library/batch: library without known doublets")
+      known_doublets = NULL
+    }
+    doublet_tbl =
+      scDblFinder(
+        sce, samples = "library", knownDoublets = known_doublets,
+        returnType = "table", BPPARAM = BiocParallel::MulticoreParam(4)
+      )
+  } else {
+    stop("hashed multi-sample experiment should have a 'library' metadata column")
+  }
+} else if (n_distinct(seurat_obj@meta.data$orig.ident) > 1) {
+  # multi-sample experiment
+  message("library/batch: orig.ident")
   doublet_tbl = scDblFinder(sce, samples = "orig.ident", returnType = "table", BPPARAM = BiocParallel::MulticoreParam(4))
 } else {
+  message("library/batch: none")
   doublet_tbl = scDblFinder(sce, returnType = "table", BPPARAM = BiocParallel::MulticoreParam(4))
+}
+
+# using the "samples" parameter does not return a table (fixed in 1.11.4)
+if (class(doublet_tbl) == "SingleCellExperiment") {
+  doublet_tbl = colData(doublet_tbl) %>% as.data.frame() %>% dplyr::select(starts_with("scDblFinder"))
+  colnames(doublet_tbl) = stringr::str_remove(colnames(doublet_tbl), "scDblFinder.")
+  doublet_tbl$type = "real"
 }
 doublet_tbl = doublet_tbl %>% as_tibble(rownames = "cell") %>% dplyr::filter(type == "real") %>% dplyr::arrange(cell)
 write_csv(doublet_tbl, "doublets.scDblFinder.csv.gz")
