@@ -1,0 +1,306 @@
+---
+title: "Generate a flowSet object from FCS files"
+date-modified: last-modified
+format:
+  html:
+    embed-resources: true
+    code-tools: true
+    toc: true
+    df-print: paged
+execute:
+  cache: false
+params:
+  # project label for the output directory
+  project_name: "project"
+  # path to the FCS files
+  fcs_dir: "/path/to/fcs"
+  # subset large samples to a maximum number of cells
+  max_cells_per_sample: 500000
+# quarto render hdcyto-fcs-flowset.qmd -P project_name:? -P fcs_dir:? -P max_cells_per_sample:?
+---
+
+This script generates a flowSet object from FCS files.
+The Quarto format allows both interactive and command-line execution.
+It additionally generates an HTML report that can be used for recordkeeping and troubleshooting.
+It is structured to facilitate the import and quality control of FCS files in a reproducible and organized manner.
+It searches for FCS files in the specified directory, imports the files into a flowSet object, downsamples the samples to avoid extremely large objects, and generates summary tables and plots.
+It generates `input/metadata-files.csv` and `input/metadata-channels.csv` metadata tables which should be manually edited to clean up labels, define sample groups, and specify the relevant samples and markers/antibodies used for the next step (`hdcyto-flowset-analyze.qmd`).
+
+# Settings
+
+```{r packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(glue)
+library(cowplot)
+library(flowCore)
+library(ncdfFlow)
+library(ggsci)
+```
+
+Check parameters
+
+```{r params}
+params
+```
+
+Define inputs
+
+```{r settings-inputs}
+if (!dir.exists(params$fcs_dir)) stop("FCS dir does not exist: ", params$fcs_dir)
+```
+
+Define outputs
+
+```{r settings-outputs}
+out_dir <- glue("./out-{params$project_name}")
+input_dir <- glue("{out_dir}/input")
+data_dir <- glue("{out_dir}/r-data")
+qc_dir <- glue("{out_dir}/qc")
+
+dir.create(out_dir, showWarnings = FALSE)
+dir.create(input_dir, showWarnings = FALSE)
+dir.create(data_dir, showWarnings = FALSE)
+dir.create(qc_dir, showWarnings = FALSE)
+
+files_csv <- glue("{input_dir}/metadata-files.csv")
+channels_csv <- glue("{input_dir}/metadata-channels.csv")
+fs_rds <- glue("{data_dir}/flowset.rds")
+nfs_cdf <- glue("{data_dir}/ncdfflowset.cdf")
+```
+
+Stop if the output files that need to be edited already exist (to prevent overwriting)
+
+```{r}
+if (file.exists(files_csv)) stop("files metadata table already exists: ", files_csv)
+if (file.exists(channels_csv)) stop("channels metadata table already exists: ", channels_csv)
+```
+
+# Determine input files
+
+Find FCS files
+
+```{r find-fcs-files}
+fcs_dir <- params$fcs_dir
+fcs_files <- list.files(path = fcs_dir, pattern = "\\.fcs$", full.names = TRUE, recursive = TRUE)
+```
+
+Generate a files/samples metadata table
+
+`CATALYST::prepData()` expects `file_name`, `sample_id`, `patient_id`, and `condition` columns
+
+```{r files_df}
+files_df <-
+  data.frame(
+    file_name = basename(fcs_files),
+    sample_id = str_remove(basename(fcs_files), ".fcs$"),
+    patient_id = "?",
+    condition = "?",
+    full_path = fcs_files,
+    row.names = basename(fcs_files)
+  )
+files_df
+```
+
+```{r}
+write_csv(files_df, files_csv)
+```
+
+Generate an AnnotatedDataFrame
+
+```{r files_adf}
+files_adf <- new("AnnotatedDataFrame", data = files_df)
+```
+
+# Generate flowSet
+
+Import FCS files
+
+```{r read.flowSet}
+# fs <- read.flowSet(files, alter.names = TRUE)
+# fs <- read.flowSet(files, transformation = "scale", alter.names = TRUE)
+# fs <- suppressWarnings(read.flowSet(path = fcs_dir, alter.names = TRUE, transformation = FALSE, phenoData = samples_adf))
+```
+
+The flowCore flowSet represents a set of FCS files and requires the data elements to remain in memory. The ncdfFlowSet inherits most of data structures from flowSet. It stores event-level data on disk and only keeps the file handler and meta data in memory.
+
+`read.ncdfFlowSet()` will load only common channels if there are discrepancies between files (`read.flowSet()` requires identical channels)
+
+```{r read.ncdfFlowSet}
+nfs <- read.ncdfFlowSet(files = files_df$full_path, ncdfFile = nfs_cdf, alter.names = TRUE, transformation = FALSE, phenoData = files_adf, compress = 5, mc.cores = 4)
+```
+
+Check which files were imported
+
+```{r}
+pData(nfs)
+```
+
+Save phenotypic data
+
+```{r}
+write_csv(pData(nfs), glue("{qc_dir}/flowset-pdata.csv"))
+```
+
+Save a table of the number of cells in each imported file
+
+```{r flowSet-num-cells}
+fsApply(nfs, nrow) |>
+  as.data.frame() |>
+  as_tibble(rownames = "filename") |>
+  dplyr::rename(num_cells = V1) |>
+  arrange(filename) |>
+  write_csv(glue("{qc_dir}/fcs-num-cells.csv"))
+```
+
+Generate a channels/antibodies metadata table
+
+`CATALYST::prepData()` expects `fcs_colname`, `antigen`, and optional `marker_class`
+
+`CATALYST::guessPanel()` guesses the antigen and marker class based on the channel name and outputs CATALYST-compatible column names (some columns may be lists and need to be coerced to character)
+
+```{r channels_df}
+# channels_df <-
+#   nfs[[1]]@parameters@data |>
+#   select(fcs_colname = name, desc) |>
+#   mutate(antigen = "?")
+channels_df <-
+  CATALYST::guessPanel(nfs[[1]]) |>
+  mutate(marker_class = ifelse(use_channel, "state", "none")) |>
+  mutate(across(where(is.list), ~ map_chr(., toString)))
+channels_df
+```
+
+```{r}
+write_csv(channels_df, channels_csv)
+```
+
+Randomly subsample ncdfFlowSet to avoid extremely large objects
+
+```{r subsample}
+set.seed(99)
+fres <- filter(nfs, filter = sampleFilter(size = params$max_cells_per_sample))
+# summary(fres)
+nfs <- Subset(nfs, fres)
+```
+
+Save a table of the number of cells in each file after subsampling
+
+```{r}
+fsApply(nfs, nrow) |>
+  as.data.frame() |>
+  as_tibble(rownames = "filename") |>
+  dplyr::rename(num_cells = V1) |>
+  arrange(filename) |>
+  write_csv(glue("{qc_dir}/flowset-num-cells.csv"))
+```
+
+Convert ncdfFlowSet to flowSet
+
+```{r as.flowSet}
+fs <- ncdfFlow::as.flowSet(nfs)
+fs
+```
+
+Check that the conversion did not lose data
+
+```{r}
+if (!identical(pData(fs), pData(nfs))) stop("pData does not match")
+if (!identical(exprs(fs[[1]]), exprs(nfs[[1]]))) stop("exprs does not match")
+```
+
+Save flowSet object
+
+```{r saveRDS-flowSet}
+saveRDS(fs, fs_rds)
+unlink(nfs_cdf)
+```
+
+# Plot expression density histograms
+
+Subset to random samples to make plots more readable
+
+```{r plot-subset-samples}
+samples_subset <- sampleNames(fs)
+if (length(samples_subset) > 15) {
+  set.seed(99)
+  samples_subset <- sort(sample(sampleNames(fs), 10))
+}
+fs_min <- subset(fs, sampleNames(fs) %in% samples_subset)
+length(sampleNames(fs_min))
+```
+
+Subset to random cells to speed up plot generation
+
+```{r plot-subset-cells}
+set.seed(99)
+fres <- filter(fs_min, filter = sampleFilter(size = 5000))
+fs_min <- Subset(fs_min, fres)
+sum(fsApply(fs_min, nrow))
+```
+
+Generate a ggplot-friendly expression table
+
+```{r tidy-exprs-tbl}
+exprs_tbl <-
+  bind_rows(
+    lapply(
+      1:length(fs_min),
+      function(i) {
+        data.frame(sample_id = pData(fs_min)[i, "sample_id"], exprs(fs_min[[i]]))
+      }
+    )
+  ) |>
+  pivot_longer(!sample_id, names_to = "channel", values_to = "exprs") |>
+  left_join(channels_df, by = c("channel" = "fcs_colname")) |>
+  dplyr::mutate(desc0 = if_else(is.na(desc0), channel, desc0)) |>
+  group_by(channel) |>
+  dplyr::mutate(min_cutoff = quantile(exprs, 0.01), max_cutoff = quantile(exprs, 0.99)) |>
+  dplyr::mutate(zscore = scale(exprs)) |>
+  ungroup() |>
+  dplyr::filter(exprs >= min_cutoff, exprs <= max_cutoff)
+# dplyr::filter(zscore > -3, zscore < 3)
+dim(exprs_tbl)
+```
+
+Generate a density plot for the original unmodified values
+
+```{r plot-density-original}
+dens_plot <-
+  exprs_tbl |>
+  ggplot(aes(x = exprs, color = sample_id)) +
+  geom_density() +
+  facet_wrap(vars(desc0), scales = "free") +
+  theme_minimal() +
+  theme(
+    plot.background = element_rect(fill = "white"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_color_igv()
+ggsave(glue("{qc_dir}/flowset-exprs-density-original.png"), dens_plot, width = 16, height = 12)
+```
+
+Generate a density plot for the log-transformed values
+
+```{r plot-density-log}
+if (min(exprs_tbl$exprs) >= 0) {
+  dens_plot <-
+    exprs_tbl |>
+    mutate(exprs_log10 = log10(exprs + 1)) |>
+    ggplot(aes(x = exprs_log10, color = sample_id)) +
+    geom_density() +
+    facet_wrap(vars(desc0), scales = "free") +
+    theme_minimal() +
+    theme(
+      plot.background = element_rect(fill = "white"),
+      panel.grid.minor = element_blank()
+    ) +
+    scale_color_igv()
+  ggsave(glue("{qc_dir}/flowset-exprs-density-log.png"), dens_plot, width = 16, height = 12)
+}
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```

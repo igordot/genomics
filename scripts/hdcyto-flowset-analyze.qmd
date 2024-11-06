@@ -1,0 +1,842 @@
+---
+title: "Perform analysis of a flowSet"
+date-modified: last-modified
+format:
+  html:
+    embed-resources: true
+    code-tools: true
+    toc: true
+    df-print: paged
+execute:
+  cache: false
+params:
+  # project label for the output directory
+  project_name: "project"
+  # cofactor for arcsinh transformation (generally 5 for CyTOF and 150 for flow cytometry)
+  arcsinh_cofactor: 150
+# quarto render hdcyto-flowset-analyze.qmd -P project_name:? -P arcsinh_cofactor:?
+---
+
+This script is designed to perform analysis of a flowSet object using a CATALYST-based workflow.
+The previous step (`hdcyto-fcs-flowset.qmd`) generates an unfiltered flowSet object that combines all input FCS files.
+The `input/metadata-files.csv` and `input/metadata-channels.csv` tables generated in the previous step are used to identify the relevant samples and markers/antibodies.
+Those files should be edited to clean up labels, define sample groups, and exclude problematic samples and markers/antibodies.
+The input flowSet object is converted to a SingleCellExperiment object, which is then used for downstream analysis, including dimensionality reduction and clustering.
+
+# Settings
+
+```{r packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(glue)
+library(janitor)
+library(cowplot)
+library(RColorBrewer)
+library(ggsci)
+library(flowCore)
+library(CATALYST)
+```
+
+Check parameters
+
+```{r params}
+params
+```
+
+Define inputs
+
+```{r settings-inputs}
+out_dir <- glue("./out-{params$project_name}")
+input_dir <- glue("{out_dir}/input")
+data_dir <- glue("{out_dir}/r-data")
+qc_dir <- glue("{out_dir}/qc")
+if (!dir.exists(out_dir)) stop("output dir does not exist: ", out_dir)
+
+fs_rds <- glue("{data_dir}/flowset.rds")
+if (!file.exists(fs_rds)) stop("flowSet does not exist: ", fs_rds)
+
+files_csv <- glue("{input_dir}/metadata-files.csv")
+if (!file.exists(files_csv)) stop("files metadata table does not exist: ", files_csv)
+
+channels_csv <- glue("{input_dir}/metadata-channels.csv")
+if (!file.exists(channels_csv)) stop("channels metadata table does not exist: ", channels_csv)
+```
+
+Define outputs
+
+```{r settings-outputs}
+sce_rds <- glue("{data_dir}/sce.rds")
+
+expr_dir <- glue("{out_dir}/expression")
+clust_dir <- glue("{out_dir}/clusters")
+
+dir.create(expr_dir, showWarnings = FALSE)
+dir.create(clust_dir, showWarnings = FALSE)
+```
+
+# Import data
+
+Import files metadata table
+
+```{r import-files-csv}
+files_tbl <- read_csv(files_csv, show_col_types = FALSE)
+files_tbl
+```
+
+Validate files metadata table
+
+```{r}
+if (!"file_name" %in% names(files_tbl)) {
+  stop("files metadata table should have 'file_name' column")
+}
+if (!"sample_id" %in% names(files_tbl)) {
+  stop("files metadata table should have 'sample_id' column (for CATALYST)")
+}
+if (!"patient_id" %in% names(files_tbl)) {
+  stop("files metadata table should have 'patient_id' column (for CATALYST)")
+}
+if (!"condition" %in% names(files_tbl)) {
+  stop("files metadata table should have 'condition' column (for CATALYST)")
+}
+if (anyNA(files_tbl$sample_id)) {
+  stop("files metadata table 'sample_id' column has NAs")
+}
+if (anyNA(files_tbl$condition)) {
+  stop("files metadata table 'condition' column has NAs")
+}
+if (n_distinct(files_tbl$condition) == 1) {
+  stop("files metadata table should have multiple conditions")
+}
+```
+
+Import channels metadata table
+
+```{r import-channels-csv}
+channels_tbl <- read_csv(channels_csv, show_col_types = FALSE)
+channels_tbl
+```
+
+Validate channels metadata table
+
+```{r}
+if (!"fcs_colname" %in% names(channels_tbl)) {
+  stop("channels metadata table should have 'fcs_colname' column")
+}
+if (!"antigen" %in% names(channels_tbl)) {
+  stop("channels metadata table should have 'antigen' column (for CATALYST)")
+}
+```
+
+Import flowSet
+
+```{r import-flowSet}
+fs <- readRDS(fs_rds)
+fs
+```
+
+Check that the parameter names are not all identical
+
+```{r}
+if (n_distinct(fs[[1]]@parameters@data$name) == 1) stop("parameter names are all identical")
+if (n_distinct(fs[[1]]@parameters@data$desc) == 1) stop("parameter descriptions are all identical")
+```
+
+Check if any files were removed from the files table (should be filtered later)
+
+```{r}
+removed_samples <- setdiff(rownames(pData(fs)), files_tbl$file_name)
+removed_samples
+```
+
+Add removed files back to the table
+
+```{r}
+if (length(removed_samples) > 0) {
+  files_tbl <- bind_rows(files_tbl, data.frame(file_name = removed_samples))
+}
+```
+
+```{r}
+# remove rownames (causes an error with diffcyt)
+# rownames(files_tbl) <- NULL
+# rownames(channels_tbl) <- NULL
+```
+
+# Generate a SingleCellExperiment
+
+Convert a flowSet into a SingleCellExperiment
+
+```{r prepData}
+arcsinh_cofactor <- params$arcsinh_cofactor
+
+# if data is pre-normalized
+# sce = prepData(fs, panel, md, transform = FALSE, FACS = TRUE)
+
+# sce <- prepData(fs, panel, md, transform = TRUE, cofactor = 5, FACS = TRUE)
+# sce <- prepData(fs, panel, md, transform = TRUE, cofactor = 150, FACS = TRUE)
+
+sce <-
+  prepData(
+    fs,
+    panel = channels_tbl,
+    md = files_tbl,
+    transform = TRUE,
+    cofactor = arcsinh_cofactor,
+    FACS = TRUE
+  )
+sce
+```
+
+Remove files not found in the files table
+
+```{r}
+sce <- filterSCE(sce, !is.na(sample_id))
+sce
+```
+
+Check the contents of the SingleCellExperiment object
+
+```{r}
+rowData(sce)
+```
+
+`CATALYST::prepData()` does not keep all files metadata columns, so they need to be added
+
+```{r}
+colData(sce) <- colData(sce)[, "sample_id", drop = FALSE]
+
+coldata_full_df <- left_join(as.data.frame(colData(sce)), files_tbl, by = c("sample_id"))
+if (!all(coldata_full_df$sample_id == colData(sce)$sample_id)) stop("colData order mismatch")
+coldata_full_df <- dplyr::select(coldata_full_df, !sample_id)
+coldata_full_df <- dplyr::select(coldata_full_df, !file_name)
+coldata_full_df <- dplyr::select(coldata_full_df, !full_path)
+
+colData(sce) <- cbind(colData(sce), coldata_full_df)
+colData(sce)
+```
+
+Add rownames to column metadata
+
+```{r}
+colnames(sce) <- make.names(colData(sce)$sample_id, unique = TRUE)
+```
+
+Extracts the experimental design table
+
+```{r}
+ei(sce)
+```
+
+```{r}
+# plotCounts(sce, group_by = "sample_id", color_by = "condition") + scale_fill_igv()
+
+# p = plotExprs(sce, color_by = "condition")
+# p = plotExprs(sce, color_by = "sample_id")
+# p$facet$params$ncol <- 6
+# p
+
+# assay(sce)[1:5, 1:3]
+
+# assay(sce, "counts")[1:5, 1:3]
+
+# assay(sce, "exprs")[1:5, 1:3]
+```
+
+# Plot expression patterns
+
+Subset to random samples to make plots more readable
+
+```{r plot-subset-samples}
+samples_subset <- levels(sce$sample_id)
+if (length(samples_subset) > 15) {
+  set.seed(99)
+  samples_subset <- sort(sample(samples_subset, 10))
+}
+sce_rand <- sce[, sce$sample_id %in% samples_subset]
+```
+
+Subset to random cells to speed up plot generation
+
+```{r plot-subset-cells}
+if (ncol(sce_rand) > 100000) {
+  set.seed(99)
+  sce_rand <- sce_rand[, sample(colnames(sce_rand), 100000)]
+}
+```
+
+Create a function to convert expression matrix to a tidy data frame for ggplot2
+
+```{r tidy_expression}
+tidy_expression <- function(sce, assay_name) {
+  t(assay(sce, assay_name)) |>
+    as_tibble(rownames = "cell_id") |>
+    pivot_longer(!cell_id, names_to = "channel", values_to = "exprs") |>
+    left_join(as_tibble(colData(sce_rand), rownames = "cell_id"), by = "cell_id") |>
+    group_by(channel) |>
+    dplyr::mutate(min_cutoff = quantile(exprs, 0.01), max_cutoff = quantile(exprs, 0.99)) |>
+    dplyr::mutate(zscore = as.vector(scale(exprs))) |>
+    ungroup() |>
+    dplyr::filter(exprs >= min_cutoff, exprs <= max_cutoff)
+  # dplyr::filter(zscore > -3, zscore < 3)
+}
+```
+
+Create a function to generate expression density plots
+
+```{r}
+plot_expression_density <- function(x, values_col) {
+  ggplot(x, aes(x = .data[[values_col]], color = sample_id)) +
+    geom_density() +
+    facet_wrap(vars(channel), scales = "free") +
+    theme_minimal() +
+    theme(
+      plot.background = element_rect(fill = "white"),
+      panel.grid.minor = element_blank()
+    ) +
+    scale_color_igv()
+}
+```
+
+Generate a density plot for the original unmodified values
+
+```{r plot-density-original}
+exprs_tbl <- tidy_expression(sce = sce_rand, assay_name = "counts")
+density_plot <-
+  exprs_tbl |>
+  plot_expression_density(values_col = "exprs")
+ggsave(glue("{qc_dir}/sce-exprs-density-original.png"), density_plot, width = 16, height = 12)
+```
+
+Generate a density plot for the original log-transformed values
+
+```{r plot-density-log}
+if (min(exprs_tbl$exprs) >= 0) {
+  density_plot <-
+    exprs_tbl |>
+    mutate(exprs_log10 = log10(exprs + 1)) |>
+    plot_expression_density(values_col = "exprs_log10")
+  ggsave(glue("{qc_dir}/sce-exprs-density-log.png"), density_plot, width = 16, height = 12)
+}
+```
+
+Generate a density plot for the arcsinh-transformed values
+
+```{r plot-density-arcsinh}
+density_plot <-
+  tidy_expression(sce = sce_rand, assay_name = "exprs") |>
+  plot_expression_density(values_col = "exprs")
+ggsave(glue("{qc_dir}/sce-exprs-density-arcsinh.png"), density_plot, width = 16, height = 12)
+```
+
+Generate correlation plots for specific markers
+
+```{r}
+if (all(c("CD4", "CD8") %in% rownames(sce))) {
+  cor_plot <-
+    t(assay(sce_rand, "exprs")) |>
+    as_tibble(rownames = "cell_id") |>
+    # dplyr::filter(CD3 > 4) |>
+    left_join(as_tibble(colData(sce_rand), rownames = "cell_id"), by = "cell_id") |>
+    ggplot(aes(x = CD4, y = CD8)) +
+    # geom_point(size = 0.1, alpha = 0.2) +
+    # geom_density_2d(color = "darkred", alpha = 0.8) +
+    geom_density_2d_filled(contour_var = "ndensity") +
+    facet_wrap(vars(sample_id), scales = "free") +
+    theme_minimal() +
+    theme(
+      plot.background = element_rect(fill = "white"),
+      panel.grid.minor = element_blank(),
+      aspect.ratio = 1
+    ) +
+    scale_fill_viridis_d(option = "plasma")
+  save_plot(glue("{qc_dir}/expr-marker-cor-CD4-CD8.png"), cor_plot, base_width = 12, base_height = 12)
+}
+
+if (all(c("CD3", "CD19") %in% rownames(sce))) {
+  cor_plot <-
+    t(assay(sce_rand, "exprs")) |>
+    as_tibble(rownames = "cell_id") |>
+    left_join(as_tibble(colData(sce_rand), rownames = "cell_id"), by = "cell_id") |>
+    ggplot(aes(x = CD3, y = CD19)) +
+    # geom_point(size = 0.1, alpha = 0.2) +
+    # geom_density_2d(color = "darkred", alpha = 0.8) +
+    geom_density_2d_filled(contour_var = "ndensity") +
+    facet_wrap(vars(sample_id), scales = "free") +
+    theme_minimal() +
+    theme(
+      plot.background = element_rect(fill = "white"),
+      panel.grid.minor = element_blank(),
+      aspect.ratio = 1
+    ) +
+    scale_fill_viridis_d(option = "plasma")
+  save_plot(glue("{qc_dir}/expr-marker-cor-CD3-CD19.png"), cor_plot, base_width = 12, base_height = 12)
+}
+```
+
+Plot median expression of all markers per sample
+
+```{r}
+pb_plot <- plotPbExprs(sce, features = NULL) + scale_color_igv()
+save_plot(glue("{expr_dir}/exprs-markers-samples-boxplot.png"), pb_plot, base_width = 10, base_height = 6)
+# pb_plot
+```
+
+Modified `CATALYST::.anno_factors()` function
+
+```{r}
+.anno_factors <- function(x, ids, which, type = c("row", "column")) {
+  type <- match.arg(type)
+  # get non-numeric cell metadata variables
+  cd <- colData(x)
+  df <- data.frame(cd, check.names = FALSE)
+  df <- select_if(df, ~ !is.numeric(.))
+  df <- mutate_all(df, ~ droplevels(factor(.x)))
+
+  # store sample matching
+  m <- match(ids, df$sample_id)
+
+  # get number of matches per variable
+  ns <- split(df, df$sample_id) |>
+    lapply(mutate_all, droplevels) |>
+    lapply(summarize_all, nlevels) |>
+    do.call(what = "rbind")
+
+  # keep only uniquely mapable factors included in 'which'
+  keep <- names(which(colMeans(ns) == 1))
+  keep <- setdiff(keep, c("sample_id", "cluster_id"))
+  if (is.character(which)) {
+    keep <- intersect(keep, which)
+  }
+  if (length(keep) == 0) {
+    return(NULL)
+  }
+  df <- df[m, keep, drop = FALSE]
+
+  # get list of colors for each annotation
+  lvls <- lapply(as.list(df), levels)
+  nlvls <- vapply(lvls, length, numeric(1))
+  pal <- pal_igv("default")(51)
+  if (any(nlvls > length(pal))) {
+    pal <- colorRampPalette(pal)(max(nlvls))
+  }
+  names(is) <- is <- colnames(df)
+  cols <- lapply(is, function(i) {
+    u <- pal[seq_len(nlvls[i])]
+    names(u) <- lvls[[i]]
+    u
+  })
+
+  ComplexHeatmap::HeatmapAnnotation(
+    which = type, df = df,
+    col = cols, gp = grid::gpar(col = "white")
+  )
+}
+```
+
+Modified `CATALYST::plotExprHeatmap()` function
+
+```{r}
+plotExprHeatmap_ed <- function(x, features = NULL,
+                               by = c("sample_id", "cluster_id", "both"), k = "meta20", m = NULL,
+                               assay = "exprs", fun = c("median", "mean", "sum"),
+                               scale = c("first", "last", "never"), q = 0.01,
+                               row_anno = TRUE, col_anno = TRUE,
+                               row_clust = TRUE, col_clust = TRUE,
+                               row_dend = TRUE, col_dend = TRUE,
+                               bars = FALSE, perc = FALSE, bin_anno = FALSE,
+                               hm_pal = rev(RColorBrewer::brewer.pal(11, "RdYlBu")),
+                               k_pal = CATALYST:::.cluster_cols, m_pal = k_pal,
+                               distance = c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski"),
+                               linkage = c("average", "ward.D", "single", "complete", "mcquitty", "median", "centroid", "ward.D2")) {
+  # check validity of input arguments
+  args <- as.list(environment())
+  CATALYST:::.check_args_plotExprHeatmap(args)
+  distance <- match.arg(distance)
+  linkage <- match.arg(linkage)
+  scale <- match.arg(scale)
+  fun <- match.arg(fun)
+  by <- match.arg(by)
+
+  # subset features of interest
+  x <- x[unique(CATALYST:::.get_features(x, features)), ]
+
+  # get specified cluster IDs
+  if (by != "sample_id") {
+    CATALYST:::.check_k(x, k)
+    x$cluster_id <- cluster_ids(x, k)
+  }
+  if (by == "both") {
+    by <- c("cluster_id", "sample_id")
+  }
+
+  # aggregate to pseudobulks by sample/cluster/both
+  # using 'assay' data & 'fun' as summary statistic
+  .do_agg <- function() {
+    z <- CATALYST:::.agg(x, by, fun, assay)
+    if (length(by) == 1) {
+      return(z)
+    }
+    set_rownames(
+      do.call("rbind", z),
+      levels(x$cluster_id)
+    )
+  }
+  # do 0-1 scaling for each marker trimming
+  # lower ('q'%) & upper (1-'q'%) quantiles
+  .do_scale <- function() {
+    if (scale == "first") {
+      z <- assay(x, assay)
+      z <- CATALYST:::.scale_exprs(z, 1, q)
+      assay(x, assay, FALSE) <- z
+      return(x)
+    } else {
+      CATALYST:::.scale_exprs(z, 1, q)
+    }
+  }
+
+  # apply one of...
+  # - scale & trim then aggregate
+  # - aggregate then scale & trim
+  # - aggregate only
+  z <- switch(scale,
+    first = {
+      x <- .do_scale()
+      .do_agg()
+    },
+    last = {
+      z <- .do_agg()
+      .do_scale()
+    },
+    never = {
+      .do_agg()
+    }
+  )
+  if (length(by) == 1) z <- t(z)
+
+  if (scale != "never" && !(assay == "counts" && fun == "sum")) {
+    qs <- round(quantile(z, c(0.01, 0.99)) * 5) / 5
+    lgd_aes <- list(at = seq(qs[1], qs[2], 0.2))
+  } else {
+    lgd_aes <- list()
+  }
+  lgd_aes$title_gp <- grid::gpar(
+    fontsize = 10,
+    fontface = "bold",
+    lineheight = 0.8
+  )
+
+  # left-hand side heatmap annotation:
+  # non-numeric cell metadata variables
+  if (!isFALSE(row_anno)) {
+    left_anno <- switch(by[1],
+      sample_id = .anno_factors(x, levels(x$sample_id), row_anno, "row"),
+      CATALYST:::.anno_clusters(x, k, m, k_pal, m_pal)
+    )
+  } else {
+    left_anno <- NULL
+  }
+  if (!isFALSE(col_anno) && length(by) == 2) {
+    top_anno <- .anno_factors(x, levels(x$sample_id), col_anno, "colum")
+  } else {
+    top_anno <- NULL
+  }
+
+  # right-hand side heatmap annotation:
+  # labeled barplot of event counts by sample
+  if (bars) {
+    right_anno <- .anno_counts(x[[by[1]]], perc)
+  } else {
+    right_anno <- NULL
+  }
+
+  # get bin annotation
+  if (bin_anno) {
+    cell_fun <- function(j, i, x, y, ...) {
+      grid.text(
+        gp = gpar(fontsize = 8),
+        sprintf("%.2f", z[i, j]), x, y
+      )
+    }
+  } else {
+    cell_fun <- NULL
+  }
+
+  a <- ifelse(assay == "exprs", "expression", assay)
+  f <- switch(fun,
+    "median" = "med",
+    fun
+  )
+  hm_title <- switch(scale,
+    first = sprintf("%s %s\n%s", fun, "scaled", a),
+    last = sprintf("%s %s\n%s", "scaled", fun, a),
+    never = paste(fun, a, sep = "\n")
+  )
+  if (length(by) == 2) {
+    col_title <- features
+  } else if (length(features) == 1 &&
+    features %in% c("type", "state")) {
+    col_title <- paste0(features, "_markers")
+  } else {
+    col_title <- ""
+  }
+
+  ComplexHeatmap::Heatmap(
+    matrix = z,
+    name = hm_title,
+    col = circlize::colorRamp2(
+      seq(min(z), max(z), l = n <- 100),
+      colorRampPalette(hm_pal)(n)
+    ),
+    column_title = col_title,
+    column_title_side = ifelse(length(by) == 2, "top", "bottom"),
+    cell_fun = cell_fun,
+    cluster_rows = row_clust,
+    cluster_columns = col_clust,
+    show_row_dend = row_dend,
+    show_column_dend = col_dend,
+    clustering_distance_rows = distance,
+    clustering_method_rows = linkage,
+    clustering_distance_columns = distance,
+    clustering_method_columns = linkage,
+    show_row_names = (
+      is.null(left_anno) ||
+        isTRUE(by == "sample_id")) && !perc,
+    row_names_side = ifelse(
+      by[1] == "cluster_id" ||
+        isFALSE(row_anno) && !row_dend ||
+        isFALSE(row_clust),
+      "left", "right"
+    ),
+    top_annotation = top_anno,
+    left_annotation = left_anno,
+    right_annotation = right_anno,
+    rect_gp = grid::gpar(col = "white"),
+    heatmap_legend_param = lgd_aes
+  )
+}
+```
+
+```{r}
+# hm_plot <- plotExprHeatmap(sce, k_pal = pal_igv()(51), m_pal = pal_igv()(51), scale = "last")
+hm_plot <- plotExprHeatmap_ed(sce, scale = "last")
+png(glue("{expr_dir}/exprs-markers-samples-heatmap.png"), width = 15, height = 10, units = "in", res = 300)
+print(hm_plot)
+dev.off()
+```
+
+Aggregate expression the same way as `CATALYST::plotExprHeatmap()` function
+
+```{r}
+agg_exprs <- function(x, assay = "exprs", fun = c("median", "mean", "sum"),
+                      scale = c("first", "last", "never"), q = 0.01) {
+  # check validity of input arguments
+  scale <- match.arg(scale)
+  fun <- match.arg(fun)
+  by <- "sample_id"
+
+  # aggregate to pseudobulks by sample/cluster/both
+  # using 'assay' data & 'fun' as summary statistic
+  .do_agg <- function() {
+    z <- CATALYST:::.agg(x, by, fun, assay)
+    if (length(by) == 1) {
+      return(z)
+    }
+    set_rownames(
+      do.call("rbind", z),
+      levels(x$cluster_id)
+    )
+  }
+  # do 0-1 scaling for each marker trimming
+  # lower ('q'%) & upper (1-'q'%) quantiles
+  .do_scale <- function() {
+    if (scale == "first") {
+      z <- assay(x, assay)
+      z <- CATALYST:::.scale_exprs(z, 1, q)
+      assay(x, assay, FALSE) <- z
+      return(x)
+    } else {
+      CATALYST:::.scale_exprs(z, 1, q)
+    }
+  }
+
+  # apply one of...
+  # - scale & trim then aggregate
+  # - aggregate then scale & trim
+  # - aggregate only
+  z <- switch(scale,
+    first = {
+      x <- .do_scale()
+      .do_agg()
+    },
+    last = {
+      z <- .do_agg()
+      .do_scale()
+    },
+    never = {
+      .do_agg()
+    }
+  )
+  if (length(by) == 1) z <- t(z)
+
+  if (scale != "never" && !(assay == "counts" && fun == "sum")) {
+    qs <- round(quantile(z, c(0.01, 0.99)) * 5) / 5
+    lgd_aes <- list(at = seq(qs[1], qs[2], 0.2))
+  } else {
+    lgd_aes <- list()
+  }
+  lgd_aes$title_gp <- grid::gpar(
+    fontsize = 10,
+    fontface = "bold",
+    lineheight = 0.8
+  )
+
+  as_tibble(t(z), rownames = "marker")
+}
+```
+
+Aggregate expression
+
+```{r aggregate-expression}
+# aggregate assay data is just (no scaling)
+agg_exprs(sce, scale = "never") |> write_csv(glue("{expr_dir}/exprs-samples-median.csv"))
+# aggregate assay data first and scale subsequently (range of each marker will be 0-1)
+agg_exprs(sce, scale = "last") |> write_csv(glue("{expr_dir}/exprs-samples-median-scaled.csv"))
+# scale and trim then aggregate
+# agg_exprs(sce, scale = "first") |> write_csv(glue("{proj_dir}/expr-samples-scale-agg.csv"))
+```
+
+# Generate UMAPs
+
+Run UMAP
+
+```{r run-umap}
+# cells: maximal number of cells per sample
+# features: "type"/"state" for type/state_markers(x) or NULL to use all features
+set.seed(99)
+sce <- runDR(sce, dr = "UMAP", cells = 10000, n_neighbors = 50, features = NULL, min_dist = 0.1, n_epochs = 500)
+sce
+```
+
+Get only the cells with UMAP coordinates
+
+```{r}
+# umap_cells <- reducedDims(sce)$UMAP[,1]
+# umap_cells <- umap_cells[!is.na(umap_cells)]
+```
+
+Randomize cell order for plotting
+
+```{r}
+set.seed(99)
+sce_rand <- sce[, sample(colnames(sce))]
+```
+
+Plot phenotypes overlaid on a UMAP
+
+```{r umap-phenotypes}
+for (p in names(colData(sce))) {
+  umap_pheno <-
+    plotDR(sce_rand, "UMAP", color_by = p) +
+    theme_classic() +
+    theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
+    scale_color_igv()
+  ggsave(glue("{out_dir}/dr-umap-pheno-{p}.png"), umap_pheno, width = 10, height = 6)
+}
+```
+
+Plot markers overlaid on a UMAP
+
+```{r umap-markers}
+marker_colors <- rev(RColorBrewer::brewer.pal(11, "RdYlBu"))
+# hcl.colors(10, "reds", rev = TRUE)
+for (m in sort(rownames(sce))) {
+  marker_plot <-
+    plotDR(sce_rand, "UMAP", color_by = m, assay = "exprs", a_pal = marker_colors) +
+    theme_cowplot() +
+    theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank())
+  ggsave(glue("{expr_dir}/dr-umap-exprs-{m}.png"), marker_plot, width = 8, height = 6)
+}
+```
+
+# Perform clustering
+
+Cluster
+
+```{r cluster}
+sce <- cluster(sce, features = NULL, xdim = 10, ydim = 10, maxK = 20, seed = 99)
+```
+
+Randomize cell order for plotting
+
+```{r}
+set.seed(99)
+sce_rand <- sce[, sample(colnames(sce))]
+```
+
+Generate cluster-related plots (UMAP, heatmap, abundance)
+
+```{r plot-clusters}
+for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20")) {
+  umap_clust <-
+    plotDR(sce_rand, "UMAP", color_by = clust) +
+    theme_classic() +
+    theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank()) +
+    scale_color_igv()
+  ggsave(glue("{clust_dir}/dr-umap-clusters-{clust}.png"), umap_clust, width = 8, height = 6)
+
+  hm_h <- n_distinct(cluster_ids(sce, clust))
+  hm_h <- (hm_h / 5) + 4
+  hm_plot <- plotExprHeatmap(sce, scale = "last", k = clust, by = "cluster_id", bars = TRUE, perc = TRUE, k_pal = pal_igv()(51))
+  png(glue("{clust_dir}/exprs-markers-clusters-heatmap-{clust}.png"), width = 15, height = hm_h, units = "in", res = 300)
+  print(hm_plot)
+  dev.off()
+  
+  plot_bar <- plotAbundances(sce, k = clust, by = "sample_id", group_by = "condition", k_pal = pal_igv()(51))
+  ggsave(glue("{clust_dir}/abundance-bar-{clust}.png"), plot_bar, width = 9, height = 9)
+  
+  plot_box <- plotAbundances(sce, k = clust, by = "cluster_id", group_by = "condition", k_pal = pal_igv()(51))
+  ggsave(glue("{clust_dir}/abundance-box-{clust}.png"), plot_box, width = 9, height = 6)
+}
+```
+
+Generate a metadata table with all clusters (meta-clusters are not stored in colData)
+
+```{r}
+# confirm that cluster_id and som100 are referring to the same clusters
+if (identical(table(colData(sce)$cluster_id), table(cluster_ids(sce, "som100")))) {
+  metadata_tbl <-
+    left_join(
+      as_tibble(colData(sce), rownames = "cell_id"),
+      cluster_codes(sce),
+      by = c("cluster_id" = "som100")
+    )
+} else {
+  stop("cluster_id mismatch")
+}
+dim(metadata_tbl)
+```
+
+```{r}
+write_csv(metadata_tbl, glue("{qc_dir}/sce-metadata.csv.gz"))
+```
+
+# Finalize analysis
+
+Save SingleCellExperiment
+
+```{r save-sce}
+saveRDS(sce, sce_rds)
+```
+
+Delete Rplots.pdf
+
+```{r}
+if (file.exists("Rplots.pdf")) {
+  file.remove("Rplots.pdf")
+}
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```
