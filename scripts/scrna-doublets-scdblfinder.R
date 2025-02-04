@@ -63,15 +63,19 @@ sce = Seurat::as.SingleCellExperiment(seurat_obj, assay = "RNA")
 sce = scran::computeSumFactors(sce, BPPARAM = BiocParallel::MulticoreParam(4))
 
 set.seed(99)
-if (all(c("hash.ID", "HTO_classification.global") %in% names(seurat_obj@meta.data))) {
+if (("hash.ID" %in% names(seurat_obj@meta.data)) && ("HTO" %in% Seurat::Assays(seurat_obj))) {
   # hashed multi-sample experiment
+  # `hash.ID` is created by `HTODemux`, `MULTI_ID` is the `MULTIseqDemux` equivalent and renamed `hash.ID` by scooter
   # samples are independent captures, not biological samples, if multiplexed using cell hashes
   if ("library" %in% names(seurat_obj@meta.data)) {
-    if ("Doublet" %in% seurat_obj@meta.data$HTO_classification.global) {
-      message("library/batch: library with known doublets")
-      known_doublets = sce$HTO_classification.global == "Doublet"
+    if ("Doublet" %in% seurat_obj@meta.data$hash.ID) {
+      message("library/batch: `library` with known doublets")
+      known_doublets = sce$hash.ID == "Doublet"
+      hto_doublet_rate = round(sum(known_doublets) / ncol(seurat_obj), 3)
+      message(glue("hashtag doublet rate: {hto_doublet_rate}"))
+      write(glue("hashtag doublet rate: {hto_doublet_rate}"), file = "create.log", append = TRUE)
     } else {
-      message("library/batch: library without known doublets")
+      message("library/batch: `library` without known doublets")
       known_doublets = NULL
     }
     doublet_tbl =
@@ -80,11 +84,11 @@ if (all(c("hash.ID", "HTO_classification.global") %in% names(seurat_obj@meta.dat
         returnType = "table", BPPARAM = BiocParallel::MulticoreParam(4)
       )
   } else {
-    stop("hashed multi-sample experiment should have a 'library' metadata column")
+    stop("hashed multi-sample experiment should have a `library` metadata column")
   }
 } else if (n_distinct(seurat_obj@meta.data$orig.ident) > 1) {
   # multi-sample experiment
-  message("library/batch: orig.ident")
+  message("library/batch: `orig.ident` without known doublets")
   doublet_tbl = scDblFinder(sce, samples = "orig.ident", returnType = "table", BPPARAM = BiocParallel::MulticoreParam(4))
 } else {
   message("library/batch: none")
