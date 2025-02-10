@@ -24,7 +24,7 @@ if [ $# -lt 4 ] ; then
 	echo -e "   RNA only:        ./${script_name} module_version genome_name sample_name fastq_dir" >&2
 	echo -e "   RNA and ADT/HTO: ./${script_name} module_version genome_name sample_name libraries_csv features_csv" >&2
 	echo -e "" >&2
-	echo -e "   RNA example:         ./${script_name} 7.0.0 hg38 my_sample /gpfs/data/fastq" >&2
+	echo -e "   RNA example:         ./${script_name} 9.0.0 hg38 my_sample /gpfs/data/fastq" >&2
 	echo -e "" >&2
 	if [ $# -gt 0 ] ; then echo -e " Provided arguments: $* \n" >&2 ; fi
 	exit 1
@@ -53,15 +53,23 @@ umask 007
 if [[ "$genome_name" == "hg19" ]] ; then
 	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-cellranger-hg19-3.0.0"
 elif [[ "$genome_name" == "hg38" ]] ; then
-	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-2020-A"
+	# transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-2020-A"
+	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-2024-A"
 elif [[ "$genome_name" == "GRCh38" ]] ; then
-	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-2020-A"
+	# transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-2020-A"
+	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-2024-A"
 elif [[ "$genome_name" == "mm10" ]] ; then
 	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-mm10-2020-A"
+elif [[ "$genome_name" == "mm39" ]] ; then
+	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCm39-2024-A"
+elif [[ "$genome_name" == "GRCm39" ]] ; then
+	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCm39-2024-A"
 elif [[ "$genome_name" == "GRCh38_and_mm10" ]] ; then
 	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38-and-mm10-2020-A"
+elif [[ "$genome_name" == "GRCh38_and_GRCm39" ]] ; then
+	transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/refdata-gex-GRCh38_and_GRCm39-2024-A"
 else
-	# transcriptome_dir="/gpfs/data/sequence/cellranger-refdata/ref/${genome_name}/cellranger"
+	# additional custom genomes
 	transcriptome_dir="/gpfs/data/igorlab/ref/${genome_name}/cellranger"
 fi
 
@@ -124,6 +132,7 @@ echo -e "\n $(date) \n" >&2
 
 cellranger_cmd="
 cellranger count \
+--create-bam true \
 --localmem $mem \
 --localcores $threads \
 --transcriptome $transcriptome_dir \
