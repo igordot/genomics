@@ -220,7 +220,7 @@ Add rownames to column metadata
 colnames(sce) <- make.names(colData(sce)$sample_id, unique = TRUE)
 ```
 
-Extracts the experimental design table
+Extract the experimental design table
 
 ```{r}
 ei(sce)
@@ -239,6 +239,16 @@ ei(sce)
 # assay(sce, "counts")[1:5, 1:3]
 
 # assay(sce, "exprs")[1:5, 1:3]
+```
+
+Pseudobulk-level MDS plot (computed on median marker expressions in each sample)
+
+```{r plot-pb-mds}
+mds_plot <-
+  pbMDS(sce, by = "sample_id", pal = pal_igv()(51)) +
+  theme_classic() +
+  theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank())
+ggsave(glue("{qc_dir}/dr-mds-pseudobulk.png"), mds_plot, width = 10, height = 8)
 ```
 
 # Plot expression patterns
@@ -743,6 +753,29 @@ for (p in names(colData(sce))) {
 }
 ```
 
+Plot samples overlaid on a UMAP, split by patient/condition when there are a lot of samples
+
+```{r umap-samples-subsets}
+if (n_distinct(sce$sample_id) > 15) {
+  for (sub_p in sort(unique(sce$patient_id))) {
+    umap_pheno <-
+      plotDR(sce_rand[, sce_rand$patient_id == sub_p], "UMAP", color_by = "sample_id") +
+      theme_classic() +
+      theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
+      scale_color_igv()
+    ggsave(glue("{out_dir}/dr-umap-pheno-sample_id-patient_id-{sub_p}.png"), umap_pheno, width = 10, height = 6)
+  }
+  for (sub_c in sort(unique(sce$condition))) {
+    umap_pheno <-
+      plotDR(sce_rand[, sce_rand$condition == sub_c], "UMAP", color_by = "sample_id") +
+      theme_classic() +
+      theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
+      scale_color_igv()
+    ggsave(glue("{out_dir}/dr-umap-pheno-sample_id-condition-{sub_c}.png"), umap_pheno, width = 10, height = 6)
+  }
+}
+```
+
 Plot markers overlaid on a UMAP
 
 ```{r umap-markers}
@@ -762,7 +795,7 @@ for (m in sort(rownames(sce))) {
 Cluster
 
 ```{r cluster}
-sce <- cluster(sce, features = NULL, xdim = 10, ydim = 10, maxK = 20, seed = 99)
+sce <- cluster(sce, features = NULL, xdim = 15, ydim = 15, maxK = 50, seed = 99)
 ```
 
 Randomize cell order for plotting
@@ -775,7 +808,7 @@ sce_rand <- sce[, sample(colnames(sce))]
 Generate cluster-related plots (UMAP, heatmap, abundance)
 
 ```{r plot-clusters}
-for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20")) {
+for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20", "meta25", "meta30", "meta50")) {
   umap_clust <-
     plotDR(sce_rand, "UMAP", color_by = clust) +
     theme_classic() +
@@ -800,14 +833,15 @@ for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20")) {
 
 Generate a metadata table with all clusters (meta-clusters are not stored in colData)
 
-```{r}
-# confirm that cluster_id and som100 are referring to the same clusters
-if (identical(table(colData(sce)$cluster_id), table(cluster_ids(sce, "som100")))) {
+```{r combine-coldata-clusters}
+# confirm that cluster_id and som100 (when grid is 10x10) are referring to the same clusters
+# names(cluster_codes(x))
+if (identical(table(colData(sce)$cluster_id), table(cluster_ids(sce, "som225")))) {
   metadata_tbl <-
     left_join(
       as_tibble(colData(sce), rownames = "cell_id"),
       cluster_codes(sce),
-      by = c("cluster_id" = "som100")
+      by = c("cluster_id" = "som225")
     )
 } else {
   stop("cluster_id mismatch")
@@ -837,6 +871,6 @@ if (file.exists("Rplots.pdf")) {
 
 # Session info
 
-```{r}
+```{r session-info}
 sessionInfo()
 ```
