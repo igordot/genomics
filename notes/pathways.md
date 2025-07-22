@@ -9,6 +9,8 @@ Manually curated list of graphical point-and-click (no coding required) gene set
 |[GSEA MSigDB Investigate Gene Sets](http://software.broadinstitute.org/gsea/msigdb/annotate.jsp)|web-based|
 |[Ingenuity Pathway Analysis (IPA)](http://www.ingenuity.com/products/ipa)|Java GUI|
 |[Enrichr](http://amp.pharm.mssm.edu/Enrichr/)|web-based|
+|[Rummagene](https://rummagene.com/)|web-based|
+|[WEB-based GEne SeT AnaLysis Toolkit (WebGestalt)](https://www.webgestalt.org/)|web-based|
 |[GO Enrichment Analysis](http://geneontology.org/page/go-enrichment-analysis)|web-based|
 |[GOrilla](http://cbl-gorilla.cs.technion.ac.il/)|web-based|
 |[Reactome PathwayBrowser](https://reactome.org/PathwayBrowser/)|web-based|
@@ -22,6 +24,7 @@ Manually curated list of graphical point-and-click (no coding required) gene set
 |[g:Profiler](http://biit.cs.ut.ee/gprofiler/)|web-based|
 |[ShinyGO](http://bioinformatics.sdstate.edu/go/)|web-based|
 |[Metascape](http://metascape.org/)|web-based|
+|[GO-Elite](http://www.genmapp.org/go_elite/)|GUI & CLI & web-based|
 
 Gene set analysis database compiled by [Xie et al](https://doi.org/10.1186/s12859-021-04124-5):
 
