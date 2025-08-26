@@ -1,5 +1,6 @@
 ---
 title: "Perform analysis of a flowSet"
+subtitle: "HDCyto workflow step 2"
 date-modified: last-modified
 format:
   html:
@@ -25,7 +26,9 @@ The input flowSet object is converted to a SingleCellExperiment object, which is
 
 # Settings
 
-```{r packages, message=FALSE, warning=FALSE}
+```{r packages}
+#| message: false
+#| warning: false
 library(tidyverse)
 library(glue)
 library(janitor)
@@ -66,10 +69,12 @@ Define outputs
 ```{r settings-outputs}
 sce_rds <- glue("{data_dir}/sce.rds")
 
-expr_dir <- glue("{out_dir}/expression")
+phono_dir <- glue("{out_dir}/phenotypes")
+exprs_dir <- glue("{out_dir}/expression")
 clust_dir <- glue("{out_dir}/clusters")
 
-dir.create(expr_dir, showWarnings = FALSE)
+dir.create(phono_dir, showWarnings = FALSE)
+dir.create(exprs_dir, showWarnings = FALSE)
 dir.create(clust_dir, showWarnings = FALSE)
 ```
 
@@ -105,6 +110,9 @@ if (anyNA(files_tbl$condition)) {
 }
 if (n_distinct(files_tbl$condition) == 1) {
   stop("files metadata table should have multiple conditions")
+}
+if (!all(sapply(files_tbl, "class") %in% c("factor", "character"))) {
+  stop("files metadata table column contents should be discrete")
 }
 ```
 
@@ -226,6 +234,12 @@ Extract the experimental design table
 ei(sce)
 ```
 
+Define the color scheme, accounting for many groups
+
+```{r color-scheme}
+color_scheme <- c(pal_igv("default")(51), pal_igv(alpha = 0.6)(51), pal_igv(alpha = 0.3)(51))
+```
+
 ```{r}
 # plotCounts(sce, group_by = "sample_id", color_by = "condition") + scale_fill_igv()
 
@@ -244,11 +258,13 @@ ei(sce)
 Pseudobulk-level MDS plot (computed on median marker expressions in each sample)
 
 ```{r plot-pb-mds}
-mds_plot <-
-  pbMDS(sce, by = "sample_id", pal = pal_igv()(51)) +
-  theme_classic() +
-  theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank())
-ggsave(glue("{qc_dir}/dr-mds-pseudobulk.png"), mds_plot, width = 10, height = 8)
+for (p in names(colData(sce))) {
+  mds_plot <-
+    pbMDS(sce, by = "sample_id", color_by = p, pal = color_scheme) +
+    theme_classic() +
+    theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank())
+  ggsave(glue("{qc_dir}/dr-mds-pseudobulk-{p}.png"), mds_plot, width = 10, height = 6)
+}
 ```
 
 # Plot expression patterns
@@ -302,7 +318,7 @@ plot_expression_density <- function(x, values_col) {
       plot.background = element_rect(fill = "white"),
       panel.grid.minor = element_blank()
     ) +
-    scale_color_igv()
+    scale_color_manual(values = color_scheme)
 }
 ```
 
@@ -384,9 +400,9 @@ if (all(c("CD3", "CD19") %in% rownames(sce))) {
 
 Plot median expression of all markers per sample
 
-```{r}
-pb_plot <- plotPbExprs(sce, features = NULL) + scale_color_igv()
-save_plot(glue("{expr_dir}/exprs-markers-samples-boxplot.png"), pb_plot, base_width = 10, base_height = 6)
+```{r plot-median-expression}
+pb_plot <- plotPbExprs(sce, features = NULL) + scale_color_manual(values = color_scheme)
+save_plot(glue("{exprs_dir}/exprs-markers-samples-boxplot.png"), pb_plot, base_width = 10, base_height = 6)
 # pb_plot
 ```
 
@@ -625,10 +641,13 @@ plotExprHeatmap_ed <- function(x, features = NULL,
 }
 ```
 
-```{r}
+```{r plot-markers-samples-heatmap}
+num_samples <- n_distinct(sce$sample_id)
+plot_height <- 4 + (num_samples / 8)
+plot_height <- round(plot_height, 1)
 # hm_plot <- plotExprHeatmap(sce, k_pal = pal_igv()(51), m_pal = pal_igv()(51), scale = "last")
 hm_plot <- plotExprHeatmap_ed(sce, scale = "last")
-png(glue("{expr_dir}/exprs-markers-samples-heatmap.png"), width = 15, height = 10, units = "in", res = 300)
+png(glue("{exprs_dir}/exprs-markers-samples-heatmap.png"), width = 15, height = plot_height, units = "in", res = 300)
 print(hm_plot)
 dev.off()
 ```
@@ -707,9 +726,9 @@ Aggregate expression
 
 ```{r aggregate-expression}
 # aggregate assay data is just (no scaling)
-agg_exprs(sce, scale = "never") |> write_csv(glue("{expr_dir}/exprs-samples-median.csv"))
+agg_exprs(sce, scale = "never") |> write_csv(glue("{exprs_dir}/exprs-samples-median.csv"))
 # aggregate assay data first and scale subsequently (range of each marker will be 0-1)
-agg_exprs(sce, scale = "last") |> write_csv(glue("{expr_dir}/exprs-samples-median-scaled.csv"))
+agg_exprs(sce, scale = "last") |> write_csv(glue("{exprs_dir}/exprs-samples-median-scaled.csv"))
 # scale and trim then aggregate
 # agg_exprs(sce, scale = "first") |> write_csv(glue("{proj_dir}/expr-samples-scale-agg.csv"))
 ```
@@ -722,7 +741,7 @@ Run UMAP
 # cells: maximal number of cells per sample
 # features: "type"/"state" for type/state_markers(x) or NULL to use all features
 set.seed(99)
-sce <- runDR(sce, dr = "UMAP", cells = 10000, n_neighbors = 50, features = NULL, min_dist = 0.1, n_epochs = 500)
+sce <- runDR(sce, dr = "UMAP", cells = 1000, n_neighbors = 50, features = NULL, min_dist = 0.3, n_epochs = 500)
 sce
 ```
 
@@ -748,8 +767,8 @@ for (p in names(colData(sce))) {
     plotDR(sce_rand, "UMAP", color_by = p) +
     theme_classic() +
     theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
-    scale_color_igv()
-  ggsave(glue("{out_dir}/dr-umap-pheno-{p}.png"), umap_pheno, width = 10, height = 6)
+    scale_color_manual(values = color_scheme)
+  ggsave(glue("{phono_dir}/dr-umap-pheno-{p}.png"), umap_pheno, width = 10, height = 6)
 }
 ```
 
@@ -762,16 +781,16 @@ if (n_distinct(sce$sample_id) > 15) {
       plotDR(sce_rand[, sce_rand$patient_id == sub_p], "UMAP", color_by = "sample_id") +
       theme_classic() +
       theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
-      scale_color_igv()
-    ggsave(glue("{out_dir}/dr-umap-pheno-sample_id-patient_id-{sub_p}.png"), umap_pheno, width = 10, height = 6)
+      scale_color_manual(values = color_scheme)
+    ggsave(glue("{phono_dir}/dr-umap-pheno-subset-sample_id-patient_id-{sub_p}.png"), umap_pheno, width = 10, height = 6)
   }
   for (sub_c in sort(unique(sce$condition))) {
     umap_pheno <-
       plotDR(sce_rand[, sce_rand$condition == sub_c], "UMAP", color_by = "sample_id") +
       theme_classic() +
       theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
-      scale_color_igv()
-    ggsave(glue("{out_dir}/dr-umap-pheno-sample_id-condition-{sub_c}.png"), umap_pheno, width = 10, height = 6)
+      scale_color_manual(values = color_scheme)
+    ggsave(glue("{phono_dir}/dr-umap-pheno-subset-sample_id-condition-{sub_c}.png"), umap_pheno, width = 10, height = 6)
   }
 }
 ```
@@ -786,7 +805,7 @@ for (m in sort(rownames(sce))) {
     plotDR(sce_rand, "UMAP", color_by = m, assay = "exprs", a_pal = marker_colors) +
     theme_cowplot() +
     theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank())
-  ggsave(glue("{expr_dir}/dr-umap-exprs-{m}.png"), marker_plot, width = 8, height = 6)
+  ggsave(glue("{exprs_dir}/dr-umap-exprs-{m}.png"), marker_plot, width = 8, height = 6)
 }
 ```
 
@@ -813,7 +832,7 @@ for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20", "meta25", "meta3
     plotDR(sce_rand, "UMAP", color_by = clust) +
     theme_classic() +
     theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank()) +
-    scale_color_igv()
+    scale_color_manual(values = color_scheme)
   ggsave(glue("{clust_dir}/dr-umap-clusters-{clust}.png"), umap_clust, width = 8, height = 6)
 
   hm_h <- n_distinct(cluster_ids(sce, clust))
@@ -822,10 +841,10 @@ for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20", "meta25", "meta3
   png(glue("{clust_dir}/exprs-markers-clusters-heatmap-{clust}.png"), width = 15, height = hm_h, units = "in", res = 300)
   print(hm_plot)
   dev.off()
-  
+
   plot_bar <- plotAbundances(sce, k = clust, by = "sample_id", group_by = "condition", k_pal = pal_igv()(51))
   ggsave(glue("{clust_dir}/abundance-bar-{clust}.png"), plot_bar, width = 9, height = 9)
-  
+
   plot_box <- plotAbundances(sce, k = clust, by = "cluster_id", group_by = "condition", k_pal = pal_igv()(51))
   ggsave(glue("{clust_dir}/abundance-box-{clust}.png"), plot_box, width = 9, height = 6)
 }

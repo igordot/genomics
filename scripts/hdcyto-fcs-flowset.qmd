@@ -1,5 +1,6 @@
 ---
 title: "Generate a flowSet object from FCS files"
+subtitle: "HDCyto workflow step 1"
 date-modified: last-modified
 format:
   html:
@@ -28,7 +29,9 @@ It generates `input/metadata-files.csv` and `input/metadata-channels.csv` metada
 
 # Settings
 
-```{r packages, message=FALSE, warning=FALSE}
+```{r packages}
+#| message: false
+#| warning: false
 library(tidyverse)
 library(glue)
 library(cowplot)
