@@ -1,0 +1,275 @@
+---
+title: "Convert flowSet to SingleCellExperiment with sample annotations"
+subtitle: "HDCyto workflow step 2"
+date-modified: last-modified
+format:
+  html:
+    embed-resources: true
+    code-tools: true
+    toc: true
+    df-print: paged
+execute:
+  cache: false
+params:
+  # project label for the input/output directory
+  project_name: "project"
+  # cofactor for arcsinh transformation (generally 5 for CyTOF and 150 for flow cytometry)
+  arcsinh_cofactor: 150
+# quarto render hdcyto-2-prepare-sce.qmd -P project_name:? -P arcsinh_cofactor:?
+---
+
+This script generates a SingleCellExperiment object with sample annotations.
+The previous step (`hdcyto-1-import-fcs.qmd`) saves an unfiltered flowSet object.
+It generates `input/metadata-files.csv` and `input/metadata-channels.csv` tables used to identify the relevant samples and markers/antibodies.
+Those files should be edited to clean up labels, define sample groups, and exclude problematic samples or markers/antibodies.
+The generated SingleCellExperiment object can then be used for CATALYST-based downstream analysis in the next step (`hdcyto-3-analyze-sce.qmd`).
+
+# Settings
+
+```{r packages}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(glue)
+library(cowplot)
+library(qs2)
+library(flowCore)
+library(CATALYST)
+```
+
+Check parameters
+
+```{r params}
+params
+```
+
+Define inputs
+
+```{r settings-inputs}
+out_dir <- glue("./out-{params$project_name}")
+input_dir <- glue("{out_dir}/input")
+data_dir <- glue("{out_dir}/r-data")
+qc_dir <- glue("{out_dir}/qc")
+if (!dir.exists(out_dir)) stop("output dir does not exist: ", out_dir)
+
+fs_qs2 <- glue("{data_dir}/flowset.qs2")
+if (!file.exists(fs_qs2)) stop("flowSet does not exist: ", fs_qs2)
+
+files_csv <- glue("{input_dir}/metadata-files.csv")
+if (!file.exists(files_csv)) stop("files metadata table does not exist: ", files_csv)
+
+channels_csv <- glue("{input_dir}/metadata-channels.csv")
+if (!file.exists(channels_csv)) stop("channels metadata table does not exist: ", channels_csv)
+```
+
+Define outputs
+
+```{r settings-outputs}
+sce_qs2 <- glue("{data_dir}/sce.qs2")
+```
+
+# Import data
+
+Import files metadata table
+
+```{r import-files-csv}
+files_tbl <- read_csv(files_csv, show_col_types = FALSE)
+files_tbl
+```
+
+Validate files metadata table
+
+```{r check-files-table}
+if (!"file_name" %in% names(files_tbl)) {
+  stop("files metadata table should have 'file_name' column")
+}
+if (!"sample_id" %in% names(files_tbl)) {
+  stop("files metadata table should have 'sample_id' column (for CATALYST)")
+}
+if (!"patient_id" %in% names(files_tbl)) {
+  stop("files metadata table should have 'patient_id' column (for CATALYST)")
+}
+if (!"condition" %in% names(files_tbl)) {
+  stop("files metadata table should have 'condition' column (for CATALYST)")
+}
+if (anyNA(files_tbl$sample_id)) {
+  stop("files metadata table 'sample_id' column has NAs")
+}
+if (anyNA(files_tbl$condition)) {
+  stop("files metadata table 'condition' column has NAs")
+}
+if (n_distinct(files_tbl$condition) == 1) {
+  stop("files metadata table should have multiple conditions")
+}
+if (!all(sapply(files_tbl, "class") %in% c("factor", "character"))) {
+  stop("files metadata table column contents should be discrete")
+}
+```
+
+Import channels metadata table
+
+```{r import-channels-csv}
+channels_tbl <- read_csv(channels_csv, show_col_types = FALSE)
+channels_tbl
+```
+
+Validate channels metadata table
+
+```{r check-channels-table}
+if (!"fcs_colname" %in% names(channels_tbl)) {
+  stop("channels metadata table should have 'fcs_colname' column")
+}
+if (!"antigen" %in% names(channels_tbl)) {
+  stop("channels metadata table should have 'antigen' column (for CATALYST)")
+}
+```
+
+Import flowSet
+
+```{r import-flowSet}
+fs <- qs2::qs_read(fs_qs2, validate_checksum = TRUE)
+fs
+```
+
+Check that the parameter names are not all identical
+
+```{r check-flowset-parameters}
+if (n_distinct(fs[[1]]@parameters@data$name) == 1) stop("parameter names are all identical")
+if (n_distinct(fs[[1]]@parameters@data$desc) == 1) stop("parameter descriptions are all identical")
+```
+
+Check if any files were removed from the files table
+
+```{r}
+removed_samples <- setdiff(rownames(pData(fs)), files_tbl$file_name)
+removed_samples
+```
+
+Add removed files back to the table (will be removed after SingleCellExperiment is generated)
+
+```{r}
+if (length(removed_samples) > 0) {
+  files_tbl <- bind_rows(files_tbl, data.frame(file_name = removed_samples))
+}
+```
+
+```{r}
+# remove rownames (causes an error with diffcyt)
+# rownames(files_tbl) <- NULL
+# rownames(channels_tbl) <- NULL
+```
+
+# Generate a SingleCellExperiment
+
+Convert a flowSet into a SingleCellExperiment
+
+```{r prepData}
+arcsinh_cofactor <- params$arcsinh_cofactor
+
+# transform: arcsinh-transformation should be performed
+# FACS: keep all channels as assay data
+sce <-
+  prepData(
+    fs,
+    panel = channels_tbl,
+    md = files_tbl,
+    transform = TRUE,
+    cofactor = arcsinh_cofactor,
+    FACS = TRUE
+  )
+sce
+```
+
+Remove files not found in the files table
+
+```{r filter-samples}
+sce <- filterSCE(sce, !is.na(sample_id))
+sce
+```
+
+Check the contents of the SingleCellExperiment object
+
+```{r}
+rowData(sce)
+```
+
+```{r save-rowdata}
+write_csv(as_tibble(rowData(sce), rownames = "feature_id"), glue("{qc_dir}/sce-rowdata.csv"))
+```
+
+`CATALYST::prepData()` does not keep all files metadata columns, so they need to be added
+
+```{r clean-coldata}
+colData(sce) <- colData(sce)[, "sample_id", drop = FALSE]
+
+coldata_full_df <- left_join(as.data.frame(colData(sce)), files_tbl, by = c("sample_id"))
+if (!all(coldata_full_df$sample_id == colData(sce)$sample_id)) stop("colData order mismatch")
+coldata_full_df <- dplyr::select(coldata_full_df, !sample_id)
+coldata_full_df <- dplyr::select(coldata_full_df, !file_name)
+coldata_full_df <- dplyr::select(coldata_full_df, !full_path)
+
+colData(sce) <- cbind(colData(sce), coldata_full_df)
+colData(sce)
+```
+
+Add rownames to column metadata
+
+```{r add-coldata-rownames}
+colnames(sce) <- make.names(colData(sce)$sample_id, unique = TRUE)
+```
+
+Extract the experimental design table
+
+```{r ei}
+ei(sce)
+```
+
+```{r save-ei}
+write_csv(as_tibble(ei(sce)), glue("{qc_dir}/sce-exp-design.csv"))
+```
+
+Plot the number of cells per sample
+
+```{r plot-num-cells}
+# plotCounts(sce, group_by = "sample_id", color_by = NULL)
+# plotCounts(sce, group_by = "sample_id", color_by = "condition") + scale_fill_igv()
+num_cells_plot <- plotCounts(sce, group_by = "sample_id", color_by = NULL)
+ggsave(glue("{qc_dir}/sce-num-cells.png"), num_cells_plot, width = 15, height = 5)
+```
+
+Check expression
+
+```{r check-assay-counts}
+quantile(assay(sce, "counts")[, sample(1:ncol(sce), 10000)])
+```
+
+```{r check-assay-exprs}
+quantile(assay(sce, "exprs")[, sample(1:ncol(sce), 10000)])
+```
+
+```{r}
+# p = plotExprs(sce, color_by = "condition")
+# p = plotExprs(sce, color_by = "sample_id")
+# p$facet$params$ncol <- 6
+# p
+```
+
+Save SingleCellExperiment
+
+```{r save-sce}
+qs2::qs_save(object = sce, file = sce_qs2)
+```
+
+Delete Rplots.pdf
+
+```{r}
+if (file.exists("Rplots.pdf")) {
+  file.remove("Rplots.pdf")
+}
+```
+
+# Session info
+
+```{r session-info}
+sessionInfo()
+```

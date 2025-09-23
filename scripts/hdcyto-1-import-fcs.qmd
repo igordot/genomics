@@ -1,5 +1,5 @@
 ---
-title: "Import FCS and generate a flowSet object"
+title: "Import FCS files and generate a flowSet object"
 subtitle: "HDCyto workflow step 1"
 date-modified: last-modified
 format:
@@ -17,7 +17,7 @@ params:
   fcs_dir: "/path/to/fcs"
   # subset large samples to a maximum number of cells
   max_cells_per_sample: 500000
-# quarto render hdcyto-fcs-flowset.qmd -P project_name:? -P fcs_dir:? -P max_cells_per_sample:?
+# quarto render hdcyto-1-import-fcs.qmd -P project_name:? -P fcs_dir:? -P max_cells_per_sample:?
 ---
 
 This script generates a flowSet object from FCS files.
@@ -25,7 +25,7 @@ The Quarto format allows both interactive and command-line execution.
 It additionally generates an HTML report that can be used for recordkeeping and troubleshooting.
 It is structured to facilitate the import and quality control of FCS files in a reproducible and organized manner.
 It searches for FCS files in the specified directory, imports the files into a flowSet object, downsamples the samples to avoid extremely large objects, and generates summary tables and plots.
-It generates `input/metadata-files.csv` and `input/metadata-channels.csv` metadata tables which should be manually edited to clean up labels, define sample groups, and specify the relevant samples and markers/antibodies used for the next step (`hdcyto-flowset-analyze.qmd`).
+It generates `input/metadata-files.csv` and `input/metadata-channels.csv` metadata tables which should be manually edited to clean up labels, define sample groups, and specify the relevant samples and markers/antibodies used for the next step (`hdcyto-2-prepare-sce.qmd`).
 
 # Settings
 
