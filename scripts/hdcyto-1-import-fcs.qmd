@@ -1,5 +1,5 @@
 ---
-title: "Generate a flowSet object from FCS files"
+title: "Import FCS and generate a flowSet object"
 subtitle: "HDCyto workflow step 1"
 date-modified: last-modified
 format:
@@ -160,13 +160,9 @@ Generate a channels/antibodies metadata table
 
 `CATALYST::prepData()` expects `fcs_colname`, `antigen`, and optional `marker_class`
 
-`CATALYST::guessPanel()` guesses the antigen and marker class based on the channel name and outputs CATALYST-compatible column names (some columns may be lists and need to be coerced to character)
+`CATALYST::guessPanel()` guesses the marker class based on the channel name and outputs CATALYST-compatible column names (some columns may need to be coerced to character from list)
 
 ```{r channels_df}
-# channels_df <-
-#   nfs[[1]]@parameters@data |>
-#   select(fcs_colname = name, desc) |>
-#   mutate(antigen = "?")
 channels_df <-
   CATALYST::guessPanel(nfs[[1]]) |>
   mutate(marker_class = ifelse(use_channel, "state", "none")) |>
@@ -242,7 +238,7 @@ fs_min <- Subset(fs_min, fres)
 sum(fsApply(fs_min, nrow))
 ```
 
-Generate a ggplot-friendly expression table
+Generate a ggplot-friendly expression table with extreme outliers removed
 
 ```{r tidy-exprs-tbl}
 exprs_tbl <-
@@ -280,7 +276,7 @@ dens_plot <-
     panel.grid.minor = element_blank()
   ) +
   scale_color_igv()
-ggsave(glue("{qc_dir}/flowset-exprs-density-original.png"), dens_plot, width = 16, height = 12)
+ggsave(glue("{qc_dir}/flowset-exprs-density-raw.png"), dens_plot, width = 16, height = 12)
 ```
 
 Generate a density plot for the log-transformed values
@@ -300,6 +296,8 @@ if (min(exprs_tbl$exprs) >= 0) {
     ) +
     scale_color_igv()
   ggsave(glue("{qc_dir}/flowset-exprs-density-log.png"), dens_plot, width = 16, height = 12)
+} else {
+  warning("negative expression values present")
 }
 ```
 
