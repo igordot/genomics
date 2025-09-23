@@ -33,6 +33,7 @@ library(tidyverse)
 library(glue)
 library(janitor)
 library(cowplot)
+library(qs2)
 library(RColorBrewer)
 library(ggsci)
 library(flowCore)
@@ -54,8 +55,8 @@ data_dir <- glue("{out_dir}/r-data")
 qc_dir <- glue("{out_dir}/qc")
 if (!dir.exists(out_dir)) stop("output dir does not exist: ", out_dir)
 
-fs_rds <- glue("{data_dir}/flowset.rds")
-if (!file.exists(fs_rds)) stop("flowSet does not exist: ", fs_rds)
+fs_qs2 <- glue("{data_dir}/flowset.qs2")
+if (!file.exists(fs_qs2)) stop("flowSet does not exist: ", fs_qs2)
 
 files_csv <- glue("{input_dir}/metadata-files.csv")
 if (!file.exists(files_csv)) stop("files metadata table does not exist: ", files_csv)
@@ -67,7 +68,7 @@ if (!file.exists(channels_csv)) stop("channels metadata table does not exist: ",
 Define outputs
 
 ```{r settings-outputs}
-sce_rds <- glue("{data_dir}/sce.rds")
+sce_qs2 <- glue("{data_dir}/sce.qs2")
 
 phono_dir <- glue("{out_dir}/phenotypes")
 exprs_dir <- glue("{out_dir}/expression")
@@ -89,7 +90,7 @@ files_tbl
 
 Validate files metadata table
 
-```{r}
+```{r check-files-table}
 if (!"file_name" %in% names(files_tbl)) {
   stop("files metadata table should have 'file_name' column")
 }
@@ -125,7 +126,7 @@ channels_tbl
 
 Validate channels metadata table
 
-```{r}
+```{r check-channels-table}
 if (!"fcs_colname" %in% names(channels_tbl)) {
   stop("channels metadata table should have 'fcs_colname' column")
 }
@@ -137,13 +138,13 @@ if (!"antigen" %in% names(channels_tbl)) {
 Import flowSet
 
 ```{r import-flowSet}
-fs <- readRDS(fs_rds)
+fs <- qs2::qs_read(fs_qs2, validate_checksum = TRUE)
 fs
 ```
 
 Check that the parameter names are not all identical
 
-```{r}
+```{r check-flowset-parameters}
 if (n_distinct(fs[[1]]@parameters@data$name) == 1) stop("parameter names are all identical")
 if (n_distinct(fs[[1]]@parameters@data$desc) == 1) stop("parameter descriptions are all identical")
 ```
@@ -877,7 +878,7 @@ write_csv(metadata_tbl, glue("{qc_dir}/sce-metadata.csv.gz"))
 Save SingleCellExperiment
 
 ```{r save-sce}
-saveRDS(sce, sce_rds)
+qs2::qs_save(object = sce, file = sce_qs2)
 ```
 
 Delete Rplots.pdf

@@ -35,6 +35,7 @@ It generates `input/metadata-files.csv` and `input/metadata-channels.csv` metada
 library(tidyverse)
 library(glue)
 library(cowplot)
+library(qs2)
 library(flowCore)
 library(ncdfFlow)
 library(ggsci)
@@ -67,7 +68,7 @@ dir.create(qc_dir, showWarnings = FALSE)
 
 files_csv <- glue("{input_dir}/metadata-files.csv")
 channels_csv <- glue("{input_dir}/metadata-channels.csv")
-fs_rds <- glue("{data_dir}/flowset.rds")
+fs_qs2 <- glue("{data_dir}/flowset.qs2")
 nfs_cdf <- glue("{data_dir}/ncdfflowset.cdf")
 ```
 
@@ -213,8 +214,8 @@ if (!identical(exprs(fs[[1]]), exprs(nfs[[1]]))) stop("exprs does not match")
 
 Save flowSet object
 
-```{r saveRDS-flowSet}
-saveRDS(fs, fs_rds)
+```{r save-flowSet}
+qs2::qs_save(object = fs, file = fs_qs2)
 unlink(nfs_cdf)
 ```
 
