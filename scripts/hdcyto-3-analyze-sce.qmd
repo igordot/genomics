@@ -50,12 +50,6 @@ if (!dir.exists(out_dir)) stop("output dir does not exist: ", out_dir)
 
 sce_qs2 <- glue("{data_dir}/sce.qs2")
 if (!file.exists(sce_qs2)) stop("SingleCellExperiment does not exist: ", sce_qs2)
-
-files_csv <- glue("{input_dir}/metadata-files.csv")
-if (!file.exists(files_csv)) stop("files metadata table does not exist: ", files_csv)
-
-channels_csv <- glue("{input_dir}/metadata-channels.csv")
-if (!file.exists(channels_csv)) stop("channels metadata table does not exist: ", channels_csv)
 ```
 
 Define outputs
@@ -173,7 +167,7 @@ exprs_tbl <- tidy_expression(sce = sce_rand, assay_name = "counts")
 density_plot <-
   exprs_tbl |>
   plot_expression_density(values_col = "exprs")
-ggsave(glue("{qc_dir}/sce-exprs-density-original.png"), density_plot, width = 16, height = 12)
+ggsave(glue("{qc_dir}/sce-exprs-density-raw.png"), density_plot, width = 16, height = 12)
 ```
 
 Generate a density plot for the original log-transformed values
@@ -246,8 +240,7 @@ Plot median expression of all markers per sample
 
 ```{r plot-median-expression}
 pb_plot <- plotPbExprs(sce, features = NULL) + scale_color_manual(values = color_scheme)
-save_plot(glue("{exprs_dir}/exprs-markers-samples-boxplot.png"), pb_plot, base_width = 10, base_height = 6)
-# pb_plot
+save_plot(glue("{exprs_dir}/exprs-markers-samples-boxplot.png"), pb_plot, base_width = 12, base_height = 6)
 ```
 
 Modified `CATALYST::.anno_factors()` function
@@ -607,12 +600,14 @@ Plot phenotypes overlaid on a UMAP
 
 ```{r umap-phenotypes}
 for (p in names(colData(sce))) {
-  umap_pheno <-
-    plotDR(sce_rand, "UMAP", color_by = p) +
-    theme_classic() +
-    theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
-    scale_color_manual(values = color_scheme)
-  ggsave(glue("{phono_dir}/dr-umap-pheno-{p}.png"), umap_pheno, width = 10, height = 6)
+  if (n_distinct(colData(sce)[[p]]) < length(color_scheme)) {
+    umap_pheno <-
+      plotDR(sce_rand, "UMAP", color_by = p) +
+      theme_classic() +
+      theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
+      scale_color_manual(values = color_scheme)
+    ggsave(glue("{phono_dir}/dr-umap-pheno-{p}.png"), umap_pheno, width = 10, height = 6)
+  }
 }
 ```
 
@@ -694,7 +689,7 @@ for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20", "meta25", "meta3
 }
 ```
 
-Generate a metadata table with all clusters (meta-clusters are not stored in colData)
+Generate a complete metadata table (meta-clusters are not stored in colData)
 
 ```{r combine-coldata-clusters}
 # confirm that cluster_id and som100 (when grid is 10x10) are referring to the same clusters
@@ -712,7 +707,7 @@ if (identical(table(colData(sce)$cluster_id), table(cluster_ids(sce, "som225")))
 dim(metadata_tbl)
 ```
 
-```{r write-metadata}
+```{r save-metadata}
 write_csv(metadata_tbl, glue("{qc_dir}/sce-metadata.csv.gz"))
 ```
 
