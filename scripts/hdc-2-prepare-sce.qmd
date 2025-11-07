@@ -21,7 +21,11 @@ params:
 This script generates a SingleCellExperiment object with sample annotations.
 The previous step (`hdcyto-1-import-fcs.qmd`) saves an unfiltered flowSet object.
 It generates `input/metadata-files.csv` and `input/metadata-channels.csv` tables used to identify the relevant samples and markers/antibodies.
-Those files should be edited to clean up labels, define sample groups, and exclude problematic samples or markers/antibodies.
+Those files should be edited to clean up labels, define sample groups, and exclude samples or markers/antibodies.
+The primary comparison groups need to be defined in the `condition` column of `metadata-files.csv`.
+Other metadata columns should be added as needed.
+It's generally helpful for downstream analysis and visualization to simplify sample names (`sample_id` column in `metadata-files.csv`) and channel names (`antigen` column in `metadata-channels.csv`) by removing any unwanted prefixes or suffixes.
+Problematic or unwanted samples and markers can be removed by deleting the corresponding rows.
 The generated SingleCellExperiment object can then be used for CATALYST-based downstream analysis in the next step (`hdcyto-3-analyze-sce.qmd`).
 
 # Settings

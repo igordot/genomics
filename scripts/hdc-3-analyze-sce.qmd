@@ -5,7 +5,6 @@ date-modified: last-modified
 format:
   html:
     embed-resources: true
-    code-tools: true
     toc: true
     df-print: paged
 execute:
@@ -55,11 +54,11 @@ if (!file.exists(sce_qs2)) stop("SingleCellExperiment does not exist: ", sce_qs2
 Define outputs
 
 ```{r settings-outputs}
-phono_dir <- glue("{out_dir}/phenotypes")
+pheno_dir <- glue("{out_dir}/phenotypes")
 exprs_dir <- glue("{out_dir}/expression")
 clust_dir <- glue("{out_dir}/clusters")
 
-dir.create(phono_dir, showWarnings = FALSE)
+dir.create(pheno_dir, showWarnings = FALSE)
 dir.create(exprs_dir, showWarnings = FALSE)
 dir.create(clust_dir, showWarnings = FALSE)
 ```
@@ -167,7 +166,7 @@ exprs_tbl <- tidy_expression(sce = sce_rand, assay_name = "counts")
 density_plot <-
   exprs_tbl |>
   plot_expression_density(values_col = "exprs")
-ggsave(glue("{qc_dir}/sce-exprs-density-raw.png"), density_plot, width = 16, height = 12)
+ggsave(glue("{qc_dir}/sce-exprs-density-raw.png"), density_plot, width = 20, height = 12)
 ```
 
 Generate a density plot for the original log-transformed values
@@ -178,7 +177,7 @@ if (min(exprs_tbl$exprs) >= 0) {
     exprs_tbl |>
     mutate(exprs_log10 = log10(exprs + 1)) |>
     plot_expression_density(values_col = "exprs_log10")
-  ggsave(glue("{qc_dir}/sce-exprs-density-log.png"), density_plot, width = 16, height = 12)
+  ggsave(glue("{qc_dir}/sce-exprs-density-log.png"), density_plot, width = 20, height = 12)
 }
 ```
 
@@ -188,7 +187,7 @@ Generate a density plot for the arcsinh-transformed values
 density_plot <-
   tidy_expression(sce = sce_rand, assay_name = "exprs") |>
   plot_expression_density(values_col = "exprs")
-ggsave(glue("{qc_dir}/sce-exprs-density-arcsinh.png"), density_plot, width = 16, height = 12)
+ggsave(glue("{qc_dir}/sce-exprs-density-arcsinh.png"), density_plot, width = 20, height = 12)
 ```
 
 Generate correlation plots for specific markers
@@ -606,7 +605,7 @@ for (p in names(colData(sce))) {
       theme_classic() +
       theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
       scale_color_manual(values = color_scheme)
-    ggsave(glue("{phono_dir}/dr-umap-pheno-{p}.png"), umap_pheno, width = 10, height = 6)
+    ggsave(glue("{pheno_dir}/dr-umap-pheno-{p}.png"), umap_pheno, width = 10, height = 6)
   }
 }
 ```
@@ -621,7 +620,7 @@ if (n_distinct(sce$sample_id) > 15) {
       theme_classic() +
       theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
       scale_color_manual(values = color_scheme)
-    ggsave(glue("{phono_dir}/dr-umap-pheno-subset-sample_id-patient_id-{sub_p}.png"), umap_pheno, width = 10, height = 6)
+    ggsave(glue("{pheno_dir}/dr-umap-pheno-subset-sample_id-patient_id-{sub_p}.png"), umap_pheno, width = 10, height = 6)
   }
   for (sub_c in sort(unique(sce$condition))) {
     umap_pheno <-
@@ -629,7 +628,7 @@ if (n_distinct(sce$sample_id) > 15) {
       theme_classic() +
       theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank()) +
       scale_color_manual(values = color_scheme)
-    ggsave(glue("{phono_dir}/dr-umap-pheno-subset-sample_id-condition-{sub_c}.png"), umap_pheno, width = 10, height = 6)
+    ggsave(glue("{pheno_dir}/dr-umap-pheno-subset-sample_id-condition-{sub_c}.png"), umap_pheno, width = 10, height = 6)
   }
 }
 ```
@@ -666,7 +665,7 @@ sce_rand <- sce[, sample(colnames(sce))]
 Generate cluster-related plots (UMAP, heatmap, abundance)
 
 ```{r plot-clusters}
-for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20", "meta25", "meta30", "meta50")) {
+for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20", "meta25", "meta30", "meta35", "meta40", "meta50")) {
   umap_clust <-
     plotDR(sce_rand, "UMAP", color_by = clust) +
     theme_classic() +
@@ -681,11 +680,15 @@ for (clust in c("meta5", "meta8", "meta10", "meta15", "meta20", "meta25", "meta3
   print(hm_plot)
   dev.off()
 
-  plot_bar <- plotAbundances(sce, k = clust, by = "sample_id", group_by = "condition", k_pal = pal_igv()(51))
-  ggsave(glue("{clust_dir}/abundance-bar-{clust}.png"), plot_bar, width = 9, height = 9)
+  for (p in names(colData(sce))) {
+    if (n_distinct(colData(sce)[[p]]) < 25) {
+      plot_bar <- plotAbundances(sce, k = clust, by = "sample_id", group_by = p, k_pal = pal_igv()(51))
+      ggsave(glue("{clust_dir}/abundance-bar-{clust}-{p}.png"), plot_bar, width = 12, height = 9)
 
-  plot_box <- plotAbundances(sce, k = clust, by = "cluster_id", group_by = "condition", k_pal = pal_igv()(51))
-  ggsave(glue("{clust_dir}/abundance-box-{clust}.png"), plot_box, width = 9, height = 6)
+      plot_box <- plotAbundances(sce, k = clust, by = "cluster_id", group_by = p, k_pal = pal_igv()(51))
+      ggsave(glue("{clust_dir}/abundance-box-{clust}-{p}.png"), plot_box, width = 12, height = 6)
+    }
+  }
 }
 ```
 

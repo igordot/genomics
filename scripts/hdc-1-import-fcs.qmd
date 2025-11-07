@@ -238,6 +238,14 @@ fs_min <- Subset(fs_min, fres)
 sum(fsApply(fs_min, nrow))
 ```
 
+Add desc0 column to the channels table (added by CATALYST if desc has underscores)
+
+```{r check-desc0}
+if (!"desc0" %in% names(channels_df)) {
+  channels_df$desc0 <- channels_df$desc
+}
+```
+
 Generate a ggplot-friendly expression table with extreme outliers removed
 
 ```{r tidy-exprs-tbl}
@@ -276,7 +284,7 @@ dens_plot <-
     panel.grid.minor = element_blank()
   ) +
   scale_color_igv()
-ggsave(glue("{qc_dir}/flowset-exprs-density-raw.png"), dens_plot, width = 16, height = 12)
+ggsave(glue("{qc_dir}/flowset-exprs-density-raw.png"), dens_plot, width = 20, height = 12)
 ```
 
 Generate a density plot for the log-transformed values
@@ -295,7 +303,7 @@ if (min(exprs_tbl$exprs) >= 0) {
       panel.grid.minor = element_blank()
     ) +
     scale_color_igv()
-  ggsave(glue("{qc_dir}/flowset-exprs-density-log.png"), dens_plot, width = 16, height = 12)
+  ggsave(glue("{qc_dir}/flowset-exprs-density-log.png"), dens_plot, width = 20, height = 12)
 } else {
   warning("negative expression values present")
 }
