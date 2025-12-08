@@ -1,6 +1,6 @@
 ---
 title: "Perform CATALYST-based analysis"
-subtitle: "HDCyto workflow step 3"
+subtitle: "High-dimensional cytometry workflow step 3"
 date-modified: last-modified
 format:
   html:
@@ -12,11 +12,13 @@ execute:
 params:
   # project label for the input/output directory
   project_name: "project"
-# quarto render hdcyto-3-analyze-sce.qmd -P project_name:?
+  # cells to subsample per sample for UMAP
+  dr_cells_per_sample: 1000
+# quarto render hdc-3-analyze-sce.qmd -P project_name:? -P dr_cells_per_sample:?
 ---
 
 This script performs CATALYST-based analysis, including dimensionality reduction and clustering.
-It starts with a SingleCellExperiment object generated in the previous step (`hdcyto-2-prepare-sce.qmd`).
+It starts with a SingleCellExperiment object generated in the previous step (`hdc-2-prepare-sce.qmd`).
 
 # Settings
 
@@ -86,6 +88,14 @@ write_csv(as_tibble(rowData(sce), rownames = "feature_id"), glue("{qc_dir}/sce-r
 write_csv(as_tibble(ei(sce)), glue("{qc_dir}/sce-exp-design.csv"))
 ```
 
+# Pseudobulk MDS
+
+Get the channels/features marked as useable
+
+```{r}
+channels_used <- rownames(sce)[rowData(sce)$use_channel == TRUE]
+```
+
 Define the color scheme, accounting for many groups
 
 ```{r color-scheme}
@@ -97,7 +107,11 @@ Pseudobulk-level MDS plot (computed on median marker expressions in each sample)
 ```{r plot-pb-mds}
 for (p in names(colData(sce))) {
   mds_plot <-
-    pbMDS(sce, by = "sample_id", color_by = p, pal = color_scheme) +
+    pbMDS(
+      sce,
+      by = "sample_id", features = channels_used,
+      color_by = p, pal = color_scheme
+    ) +
     theme_classic() +
     theme(aspect.ratio = 1, axis.text = element_blank(), axis.ticks = element_blank(), strip.background = element_blank())
   ggsave(glue("{qc_dir}/dr-mds-pseudobulk-{p}.png"), mds_plot, width = 10, height = 6)
@@ -105,6 +119,10 @@ for (p in names(colData(sce))) {
 ```
 
 # Plot expression patterns
+
+```{r plot-subset-channels}
+sce_rand <- sce[channels_used, ]
+```
 
 Subset to random samples to make plots more readable
 
@@ -114,7 +132,7 @@ if (length(samples_subset) > 15) {
   set.seed(99)
   samples_subset <- sort(sample(samples_subset, 10))
 }
-sce_rand <- sce[, sce$sample_id %in% samples_subset]
+sce_rand <- sce_rand[, sce_rand$sample_id %in% samples_subset]
 ```
 
 Subset to random cells to speed up plot generation
@@ -238,7 +256,7 @@ if (all(c("CD3", "CD19") %in% rownames(sce))) {
 Plot median expression of all markers per sample
 
 ```{r plot-median-expression}
-pb_plot <- plotPbExprs(sce, features = NULL) + scale_color_manual(values = color_scheme)
+pb_plot <- plotPbExprs(sce, features = channels_used) + scale_color_manual(values = color_scheme)
 save_plot(glue("{exprs_dir}/exprs-markers-samples-boxplot.png"), pb_plot, base_width = 12, base_height = 6)
 ```
 
@@ -482,7 +500,7 @@ num_samples <- n_distinct(sce$sample_id)
 plot_height <- 4 + (num_samples / 8)
 plot_height <- round(plot_height, 1)
 # hm_plot <- plotExprHeatmap(sce, k_pal = pal_igv()(51), m_pal = pal_igv()(51), scale = "last")
-hm_plot <- plotExprHeatmap_ed(sce, scale = "last")
+hm_plot <- plotExprHeatmap_ed(sce, features = channels_used, scale = "last")
 png(glue("{exprs_dir}/exprs-markers-samples-heatmap.png"), width = 15, height = plot_height, units = "in", res = 300)
 print(hm_plot)
 dev.off()
@@ -577,22 +595,24 @@ Run UMAP
 # cells: maximal number of cells per sample
 # features: "type"/"state" for type/state_markers(x) or NULL to use all features
 set.seed(99)
-sce <- runDR(sce, dr = "UMAP", cells = 1000, n_neighbors = 50, features = NULL, min_dist = 0.3, n_epochs = 500)
+sce <- runDR(sce, dr = "UMAP", cells = params$dr_cells_per_sample, n_neighbors = 50, features = channels_used, min_dist = 0.3, n_epochs = 500)
 sce
 ```
 
 Get only the cells with UMAP coordinates
 
 ```{r}
-# umap_cells <- reducedDims(sce)$UMAP[,1]
-# umap_cells <- umap_cells[!is.na(umap_cells)]
+dr_cells <- reducedDims(sce)$UMAP[, 1]
+dr_cells <- dr_cells[!is.na(dr_cells)]
+dr_cells <- names(dr_cells)
+length(dr_cells)
 ```
 
 Randomize cell order for plotting
 
 ```{r}
 set.seed(99)
-sce_rand <- sce[, sample(colnames(sce))]
+sce_rand <- sce[, sample(dr_cells)]
 ```
 
 Plot phenotypes overlaid on a UMAP
@@ -652,14 +672,14 @@ for (m in sort(rownames(sce))) {
 Cluster
 
 ```{r cluster}
-sce <- cluster(sce, features = NULL, xdim = 15, ydim = 15, maxK = 50, seed = 99)
+sce <- cluster(sce, features = channels_used, xdim = 15, ydim = 15, maxK = 50, seed = 99)
 ```
 
 Randomize cell order for plotting
 
 ```{r}
 set.seed(99)
-sce_rand <- sce[, sample(colnames(sce))]
+sce_rand <- sce[, sample(dr_cells)]
 ```
 
 Generate cluster-related plots (UMAP, heatmap, abundance)

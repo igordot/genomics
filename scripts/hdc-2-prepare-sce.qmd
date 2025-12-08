@@ -1,6 +1,6 @@
 ---
 title: "Convert flowSet to SingleCellExperiment with sample annotations"
-subtitle: "HDCyto workflow step 2"
+subtitle: "High-dimensional cytometry workflow step 2"
 date-modified: last-modified
 format:
   html:
@@ -13,20 +13,23 @@ execute:
 params:
   # project label for the input/output directory
   project_name: "project"
-  # cofactor for arcsinh transformation (generally 5 for CyTOF and 150 for flow cytometry)
+  # cofactor for arcsinh transformation
+  # generally 5 for CyTOF, 150 for flow cytometry, higher for spectral flow
   arcsinh_cofactor: 150
-# quarto render hdcyto-2-prepare-sce.qmd -P project_name:? -P arcsinh_cofactor:?
+  # attempt to automatically separate non-mass channels for CyTOF data
+  cytof: FALSE
+# quarto render hdc-2-prepare-sce.qmd -P project_name:? -P arcsinh_cofactor:?
 ---
 
 This script generates a SingleCellExperiment object with sample annotations.
-The previous step (`hdcyto-1-import-fcs.qmd`) saves an unfiltered flowSet object.
+The previous step (`hdc-1-import-fcs.qmd`) saves an unfiltered flowSet object.
 It generates `input/metadata-files.csv` and `input/metadata-channels.csv` tables used to identify the relevant samples and markers/antibodies.
 Those files should be edited to clean up labels, define sample groups, and exclude samples or markers/antibodies.
 The primary comparison groups need to be defined in the `condition` column of `metadata-files.csv`.
 Other metadata columns should be added as needed.
 It's generally helpful for downstream analysis and visualization to simplify sample names (`sample_id` column in `metadata-files.csv`) and channel names (`antigen` column in `metadata-channels.csv`) by removing any unwanted prefixes or suffixes.
 Problematic or unwanted samples and markers can be removed by deleting the corresponding rows.
-The generated SingleCellExperiment object can then be used for CATALYST-based downstream analysis in the next step (`hdcyto-3-analyze-sce.qmd`).
+The generated SingleCellExperiment object can then be used for CATALYST-based downstream analysis in the next step (`hdc-3-analyze-sce.qmd`).
 
 # Settings
 
@@ -169,6 +172,7 @@ Convert a flowSet into a SingleCellExperiment
 
 ```{r prepData}
 arcsinh_cofactor <- params$arcsinh_cofactor
+is_cytof <- as.logical(params$cytof)
 
 # transform: arcsinh-transformation should be performed
 # FACS: keep all channels as assay data
@@ -179,7 +183,7 @@ sce <-
     md = files_tbl,
     transform = TRUE,
     cofactor = arcsinh_cofactor,
-    FACS = TRUE
+    FACS = !is_cytof
   )
 sce
 ```
@@ -244,11 +248,11 @@ ggsave(glue("{qc_dir}/sce-num-cells.png"), num_cells_plot, width = 15, height = 
 Check expression
 
 ```{r check-assay-counts}
-quantile(assay(sce, "counts")[, sample(1:ncol(sce), 10000)])
+quantile(assay(sce, "counts")[, sample(1:ncol(sce), 1000)])
 ```
 
 ```{r check-assay-exprs}
-quantile(assay(sce, "exprs")[, sample(1:ncol(sce), 10000)])
+quantile(assay(sce, "exprs")[, sample(1:ncol(sce), 1000)])
 ```
 
 ```{r}

@@ -1,6 +1,6 @@
 ---
 title: "Import FCS files and generate a flowSet object"
-subtitle: "HDCyto workflow step 1"
+subtitle: "High-dimensional cytometry workflow step 1"
 date-modified: last-modified
 format:
   html:
@@ -25,7 +25,7 @@ The Quarto format allows both interactive and command-line execution.
 It additionally generates an HTML report that can be used for recordkeeping and troubleshooting.
 It is structured to facilitate the import and quality control of FCS files in a reproducible and organized manner.
 It searches for FCS files in the specified directory, imports the files into a flowSet object, downsamples the samples to avoid extremely large objects, and generates summary tables and plots.
-It generates `input/metadata-files.csv` and `input/metadata-channels.csv` metadata tables which should be manually edited to clean up labels, define sample groups, and specify the relevant samples and markers/antibodies used for the next step (`hdcyto-2-prepare-sce.qmd`).
+It generates `input/metadata-files.csv` and `input/metadata-channels.csv` metadata tables which should be manually edited to clean up labels, define sample groups, and specify the relevant samples and markers/antibodies used for the next step (`hdc-2-prepare-sce.qmd`).
 
 # Settings
 
@@ -185,7 +185,7 @@ nfs <- Subset(nfs, fres)
 
 Save a table of the number of cells in each file after subsampling
 
-```{r}
+```{r flowset-num-cells}
 fsApply(nfs, nrow) |>
   as.data.frame() |>
   as_tibble(rownames = "filename") |>
@@ -203,7 +203,7 @@ fs
 
 Check that the conversion did not lose data
 
-```{r}
+```{r check-ncdf-conversion}
 if (!identical(pData(fs), pData(nfs))) stop("pData does not match")
 if (!identical(exprs(fs[[1]]), exprs(nfs[[1]]))) stop("exprs does not match")
 ```
@@ -238,7 +238,7 @@ fs_min <- Subset(fs_min, fres)
 sum(fsApply(fs_min, nrow))
 ```
 
-Add desc0 column to the channels table (added by CATALYST if desc has underscores)
+Add `desc0` column to the channels table (added by CATALYST if `desc` has underscores)
 
 ```{r check-desc0}
 if (!"desc0" %in% names(channels_df)) {
@@ -311,6 +311,6 @@ if (min(exprs_tbl$exprs) >= 0) {
 
 # Session info
 
-```{r}
+```{r session-info}
 sessionInfo()
 ```
