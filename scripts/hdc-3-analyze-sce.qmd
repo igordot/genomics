@@ -5,6 +5,7 @@ date-modified: last-modified
 format:
   html:
     embed-resources: true
+    code-tools: true
     toc: true
     df-print: paged
 execute:
@@ -93,7 +94,9 @@ write_csv(as_tibble(ei(sce)), glue("{qc_dir}/sce-exp-design.csv"))
 Get the channels/features marked as useable
 
 ```{r}
+if (ncol(rowData(sce)) < 3) stop("rowData not set")
 channels_used <- rownames(sce)[rowData(sce)$use_channel == TRUE]
+if (!length(channels_used)) stop("no useable channels")
 ```
 
 Define the color scheme, accounting for many groups
@@ -128,9 +131,9 @@ Subset to random samples to make plots more readable
 
 ```{r plot-subset-samples}
 samples_subset <- levels(sce$sample_id)
-if (length(samples_subset) > 15) {
+if (length(samples_subset) > 20) {
   set.seed(99)
-  samples_subset <- sort(sample(samples_subset, 10))
+  samples_subset <- sort(sample(samples_subset, 15))
 }
 sce_rand <- sce_rand[, sce_rand$sample_id %in% samples_subset]
 ```
@@ -177,25 +180,24 @@ plot_expression_density <- function(x, values_col) {
 }
 ```
 
-Generate a density plot for the original unmodified values
+Generate a density plot for the original values
 
 ```{r plot-density-original}
-exprs_tbl <- tidy_expression(sce = sce_rand, assay_name = "counts")
-density_plot <-
-  exprs_tbl |>
-  plot_expression_density(values_col = "exprs")
-ggsave(glue("{qc_dir}/sce-exprs-density-raw.png"), density_plot, width = 20, height = 12)
-```
-
-Generate a density plot for the original log-transformed values
-
-```{r plot-density-log}
-if (min(exprs_tbl$exprs) >= 0) {
+if ("counts" %in% names(assays(sce_rand))) {
+  exprs_tbl <- tidy_expression(sce = sce_rand, assay_name = "counts")
+  # plot original values
   density_plot <-
     exprs_tbl |>
-    mutate(exprs_log10 = log10(exprs + 1)) |>
-    plot_expression_density(values_col = "exprs_log10")
-  ggsave(glue("{qc_dir}/sce-exprs-density-log.png"), density_plot, width = 20, height = 12)
+    plot_expression_density(values_col = "exprs")
+  ggsave(glue("{qc_dir}/sce-exprs-density-raw.png"), density_plot, width = 20, height = 12)
+  # plot log-transformed values
+  if (min(exprs_tbl$exprs) >= 0) {
+    density_plot <-
+      exprs_tbl |>
+      mutate(exprs_log10 = log10(exprs + 1)) |>
+      plot_expression_density(values_col = "exprs_log10")
+    ggsave(glue("{qc_dir}/sce-exprs-density-log.png"), density_plot, width = 20, height = 12)
+  }
 }
 ```
 

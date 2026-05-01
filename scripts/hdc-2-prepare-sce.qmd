@@ -145,6 +145,14 @@ if (n_distinct(fs[[1]]@parameters@data$name) == 1) stop("parameter names are all
 if (n_distinct(fs[[1]]@parameters@data$desc) == 1) stop("parameter descriptions are all identical")
 ```
 
+Check if the files table corresponds to the imported flowSet
+
+```{r}
+unmatched_samples <- setdiff(files_tbl$file_name, rownames(pData(fs)))
+unmatched_samples
+if (length(unmatched_samples)) stop("files metadata table includes samples not in the flowSet")
+```
+
 Check if any files were removed from the files table
 
 ```{r}
@@ -155,7 +163,7 @@ removed_samples
 Add removed files back to the table (will be removed after SingleCellExperiment is generated)
 
 ```{r}
-if (length(removed_samples) > 0) {
+if (length(removed_samples)) {
   files_tbl <- bind_rows(files_tbl, data.frame(file_name = removed_samples))
 }
 ```
@@ -213,11 +221,16 @@ colData(sce) <- colData(sce)[, "sample_id", drop = FALSE]
 coldata_full_df <- left_join(as.data.frame(colData(sce)), files_tbl, by = c("sample_id"))
 if (!all(coldata_full_df$sample_id == colData(sce)$sample_id)) stop("colData order mismatch")
 coldata_full_df <- dplyr::select(coldata_full_df, !sample_id)
-coldata_full_df <- dplyr::select(coldata_full_df, !file_name)
 coldata_full_df <- dplyr::select(coldata_full_df, !full_path)
+
+# keep file_name as that is the link to the original flowSet
 
 colData(sce) <- cbind(colData(sce), coldata_full_df)
 colData(sce)
+```
+
+```{r save-coldata}
+write_csv(distinct(as_tibble(colData(sce))), glue("{qc_dir}/sce-coldata.csv"))
 ```
 
 Add rownames to column metadata
