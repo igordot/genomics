@@ -133,7 +133,7 @@ random_cells = sample(colnames(seurat_obj))
 plot_umap =
   FeaturePlot(
     seurat_obj, features = "doublet_score_scDblFinder", reduction = "umap",
-    cells = random_cells, pt.size = pt_size, cols = featplot_colors
+    cells = random_cells, pt.size = pt_size, cols = featplot_colors, raster = FALSE
   ) +
   theme_cowplot() +
   theme(
@@ -150,7 +150,7 @@ Sys.sleep(1)
 plot_umap =
   DimPlot(
     seurat_obj, group.by = "doublet_class_scDblFinder", reduction = "umap",
-    cells = random_cells, pt.size = pt_size, cols = c("#E41A1C", "#377EB8")
+    cells = random_cells, pt.size = pt_size, cols = c("#E41A1C", "#377EB8"), raster = FALSE
   ) +
   theme_cowplot() +
   theme(
